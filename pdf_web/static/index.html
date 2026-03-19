@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF Text Extractor</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: rgba(255, 255, 255, 0.08);
+      --panel-strong: rgba(255, 255, 255, 0.14);
+      --text: #eef2ff;
+      --muted: #b8c1ec;
+      --accent: #6ea8fe;
+      --accent-2: #8ef6d1;
+      --danger: #ff8e8e;
+      --warning: #ffd27a;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.25);
+      --radius: 22px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, #1d2b64 0%, transparent 35%),
+        radial-gradient(circle at top right, #0f9b8e 0%, transparent 25%),
+        linear-gradient(135deg, #0b1020, #111936 55%, #0b1020);
+      padding: 32px 18px;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 24px;
+      align-items: stretch;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,0.14);
+      backdrop-filter: blur(10px);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-main {
+      padding: 30px;
+    }
+
+    .hero-side {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 42px;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: 16px;
+      margin: 0 0 22px;
+      max-width: 700px;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .badge {
+      padding: 9px 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .upload-card,
+    .result-card {
+      padding: 24px;
+      margin-top: 24px;
+    }
+
+    .dropzone {
+      position: relative;
+      border: 2px dashed rgba(255,255,255,0.25);
+      border-radius: 18px;
+      padding: 28px;
+      text-align: center;
+      background: rgba(255,255,255,0.03);
+      transition: 0.2s ease;
+    }
+
+    .dropzone:hover {
+      border-color: var(--accent);
+      background: rgba(255,255,255,0.05);
+    }
+
+    .dropzone input[type="file"] {
+      display: none;
+    }
+
+    .drop-label {
+      display: inline-block;
+      padding: 14px 22px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--accent), #9d7bff);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+      transition: transform 0.15s ease;
+    }
+
+    .drop-label:hover {
+      transform: translateY(-1px);
+    }
+
+    .file-name {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 14px;
+      word-break: break-all;
+    }
+
+    .action-row {
+      display: flex;
+      gap: 12px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: none;
+      border-radius: 14px;
+      padding: 13px 18px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: 0.18s ease;
+    }
+
+    .primary {
+      background: linear-gradient(135deg, #52a0fd, #6b73ff);
+      color: white;
+    }
+
+    .secondary {
+      background: rgba(255,255,255,0.08);
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,0.14);
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      opacity: 0.97;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .status {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      font-size: 14px;
+      display: none;
+    }
+
+    .status.ok {
+      display: block;
+      background: rgba(142, 246, 209, 0.12);
+      color: #cffff2;
+      border: 1px solid rgba(142, 246, 209, 0.3);
+    }
+
+    .status.error {
+      display: block;
+      background: rgba(255, 142, 142, 0.12);
+      color: #ffd8d8;
+      border: 1px solid rgba(255, 142, 142, 0.3);
+    }
+
+    .status.info {
+      display: block;
+      background: rgba(110, 168, 254, 0.12);
+      color: #dbe9ff;
+      border: 1px solid rgba(110, 168, 254, 0.25);
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .stat {
+      padding: 16px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .stat .label {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    .stat .value {
+      font-size: 20px;
+      font-weight: 800;
+      word-break: break-word;
+    }
+
+    .section-title {
+      margin: 22px 0 10px;
+      font-size: 18px;
+    }
+
+    .warnings {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--warning);
+    }
+
+    .text-box {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: rgba(0,0,0,0.22);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      padding: 18px;
+      max-height: 460px;
+      overflow: auto;
+      color: #f8fbff;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .mini-note {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 10px;
+    }
+
+    .top-link {
+      color: var(--accent-2);
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    @media (max-width: 900px) {
+      .hero {
+        grid-template-columns: 1fr;
+      }
+
+      .stats {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      h1 {
+        font-size: 34px;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .stats {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-main,
+      .hero-side,
+      .upload-card,
+      .result-card {
+        padding: 18px;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="hero">
+      <div class="card hero-main">
+        <h1>PDF Text Extractor</h1>
+        <p class="sub">
+          Upload a PDF invoice, receipt, or scanned document and extract the text locally.
+          The app first tries direct PDF text extraction, then falls back to OCR when needed.
+        </p>
+
+        <div class="badge-row">
+          <div class="badge">Direct text extraction</div>
+          <div class="badge">OCR fallback</div>
+          <div class="badge">Fast local testing</div>
+        </div>
+      </div>
+
+      <div class="card hero-side">
+        <div style="font-size: 14px; color: var(--muted); margin-bottom: 8px;">Local address</div>
+        <div style="font-size: 24px; font-weight: 800; margin-bottom: 12px;">http://127.0.0.1:8000</div>
+        <div style="color: var(--muted); font-size: 14px;">
+          Run the Python file in PyCharm, then open the address above in your browser.
+        </div>
+      </div>
+    </div>
+
+    <div class="card upload-card">
+      <div class="dropzone">
+        <label class="drop-label" for="pdfFile">Choose PDF</label>
+        <input type="file" id="pdfFile" accept=".pdf,application/pdf" />
+        <div class="file-name" id="fileNameLabel">No file selected</div>
+
+        <div class="action-row">
+          <button class="primary" id="extractBtn">Extract Text</button>
+          <button class="secondary" id="copyBtn" disabled>Copy Text</button>
+          <button class="secondary" id="downloadBtn" disabled>Download TXT</button>
+        </div>
+
+        <div class="mini-note">
+          Best for digital PDFs and scanned PDFs with OCR fallback.
+        </div>
+      </div>
+
+      <div id="statusBox" class="status info">Ready.</div>
+    </div>
+
+    <div id="resultCard" class="card result-card hidden">
+      <h2 style="margin-top: 0;">Extraction Result</h2>
+
+      <div class="stats">
+        <div class="stat">
+          <div class="label">File</div>
+          <div class="value" id="fileName"></div>
+        </div>
+        <div class="stat">
+          <div class="label">Pages</div>
+          <div class="value" id="pageCount"></div>
+        </div>
+        <div class="stat">
+          <div class="label">Characters</div>
+          <div class="value" id="charCount"></div>
+        </div>
+        <div class="stat">
+          <div class="label">Method</div>
+          <div class="value" id="method"></div>
+        </div>
+      </div>
+
+      <div id="warningsWrap" class="hidden">
+        <div class="section-title">Warnings</div>
+        <ul id="warningsList" class="warnings"></ul>
+      </div>
+
+      <div class="section-title">Extracted Text</div>
+      <div class="text-box" id="extractedText"></div>
+    </div>
+  </div>
+
+  <script>
+    const pdfFile = document.getElementById("pdfFile");
+    const extractBtn = document.getElementById("extractBtn");
+    const copyBtn = document.getElementById("copyBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
+
+    const fileNameLabel = document.getElementById("fileNameLabel");
+    const statusBox = document.getElementById("statusBox");
+    const resultCard = document.getElementById("resultCard");
+
+    const fileNameEl = document.getElementById("fileName");
+    const pageCountEl = document.getElementById("pageCount");
+    const charCountEl = document.getElementById("charCount");
+    const methodEl = document.getElementById("method");
+    const extractedTextEl = document.getElementById("extractedText");
+
+    const warningsWrap = document.getElementById("warningsWrap");
+    const warningsList = document.getElementById("warningsList");
+
+    let latestText = "";
+    let latestFileName = "extracted_text.txt";
+
+    function setStatus(message, type = "info") {
+      statusBox.className = `status ${type}`;
+      statusBox.textContent = message;
+    }
+
+    pdfFile.addEventListener("change", () => {
+      const file = pdfFile.files[0];
+      fileNameLabel.textContent = file ? file.name : "No file selected";
+    });
+
+    extractBtn.addEventListener("click", async () => {
+      const file = pdfFile.files[0];
+
+      if (!file) {
+        setStatus("Please choose a PDF file first.", "error");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      extractBtn.disabled = true;
+      copyBtn.disabled = true;
+      downloadBtn.disabled = true;
+      resultCard.classList.add("hidden");
+      setStatus("Uploading PDF and extracting text...", "info");
+
+      try {
+        const response = await fetch("/extract-text", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || "Failed to process file.");
+        }
+
+        latestText = data.extracted_text || "";
+        latestFileName = (data.file_name || "extracted") + ".txt";
+
+        fileNameEl.textContent = data.file_name || "-";
+        pageCountEl.textContent = data.page_count ?? "-";
+        charCountEl.textContent = data.character_count ?? "-";
+        methodEl.textContent = data.method || "-";
+        extractedTextEl.textContent = latestText || "No text found.";
+
+        warningsList.innerHTML = "";
+        if (data.warnings && data.warnings.length > 0) {
+          warningsWrap.classList.remove("hidden");
+          data.warnings.forEach(warning => {
+            const li = document.createElement("li");
+            li.textContent = warning;
+            warningsList.appendChild(li);
+          });
+        } else {
+          warningsWrap.classList.add("hidden");
+        }
+
+        resultCard.classList.remove("hidden");
+        copyBtn.disabled = !latestText;
+        downloadBtn.disabled = !latestText;
+        setStatus("Extraction complete.", "ok");
+      } catch (error) {
+        setStatus(error.message, "error");
+      } finally {
+        extractBtn.disabled = false;
+      }
+    });
+
+    copyBtn.addEventListener("click", async () => {
+      if (!latestText) return;
+
+      try {
+        await navigator.clipboard.writeText(latestText);
+        setStatus("Extracted text copied to clipboard.", "ok");
+      } catch {
+        setStatus("Could not copy text.", "error");
+      }
+    });
+
+    downloadBtn.addEventListener("click", () => {
+      if (!latestText) return;
+
+      const blob = new Blob([latestText], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = latestFileName.replace(/\.pdf$/i, "_extracted.txt");
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      setStatus("Text file downloaded.", "ok");
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+../.venv/
+env/
+output/*.txt
+output/*.docx
+.DS_Store
+.idea/
+.vscode/
