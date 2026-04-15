@@ -3,25 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PDF Text Extractor</title>
+  <title>PDF Batch Extractor + Summary Export</title>
   <style>
     :root {
-      --bg: #0b1020;
-      --panel: rgba(255, 255, 255, 0.08);
-      --panel-strong: rgba(255, 255, 255, 0.14);
-      --text: #eef2ff;
-      --muted: #b8c1ec;
-      --accent: #6ea8fe;
-      --accent-2: #8ef6d1;
-      --danger: #ff8e8e;
-      --warning: #ffd27a;
-      --shadow: 0 18px 50px rgba(0, 0, 0, 0.25);
-      --radius: 22px;
+      --bg: #0a1022;
+      --surface: rgba(255, 255, 255, 0.08);
+      --surface-strong: rgba(255, 255, 255, 0.14);
+      --surface-soft: rgba(255, 255, 255, 0.05);
+      --text: #f3f6ff;
+      --muted: #b6c0ea;
+      --accent: #6fa6ff;
+      --accent-2: #7de8cc;
+      --ok: #9df5d0;
+      --danger: #ffb1b1;
+      --warning: #ffd98e;
+      --radius: 20px;
+      --shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
@@ -29,154 +29,120 @@
       font-family: Inter, Segoe UI, Arial, sans-serif;
       color: var(--text);
       background:
-        radial-gradient(circle at top left, #1d2b64 0%, transparent 35%),
-        radial-gradient(circle at top right, #0f9b8e 0%, transparent 25%),
-        linear-gradient(135deg, #0b1020, #111936 55%, #0b1020);
-      padding: 32px 18px;
+        radial-gradient(circle at 10% 15%, rgba(104, 134, 255, 0.35), transparent 30%),
+        radial-gradient(circle at 85% 10%, rgba(70, 220, 185, 0.25), transparent 28%),
+        linear-gradient(140deg, #0a1022, #121c3c 58%, #0b1228);
+      padding: 30px 16px;
     }
 
-    .container {
-      max-width: 1100px;
-      margin: 0 auto;
+    .container { max-width: 1180px; margin: 0 auto; }
+
+    .card {
+      border-radius: var(--radius);
+      background: var(--surface);
+      border: 1px solid rgba(255,255,255,0.16);
+      backdrop-filter: blur(10px);
+      box-shadow: var(--shadow);
     }
 
     .hero {
       display: grid;
       grid-template-columns: 1.2fr 0.8fr;
-      gap: 24px;
-      align-items: stretch;
-      margin-bottom: 24px;
+      gap: 20px;
+      margin-bottom: 22px;
     }
 
-    .card {
-      background: var(--panel);
-      border: 1px solid rgba(255,255,255,0.14);
-      backdrop-filter: blur(10px);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-    }
-
-    .hero-main {
-      padding: 30px;
-    }
-
-    .hero-side {
-      padding: 24px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-    }
+    .hero-main, .hero-side, .upload-card, .result-card { padding: 24px; }
 
     h1 {
       margin: 0 0 10px;
-      font-size: 42px;
-      line-height: 1.05;
+      font-size: 40px;
+      line-height: 1.1;
       letter-spacing: -0.03em;
     }
 
+    h2 { margin: 0; }
+
     .sub {
+      margin: 0;
       color: var(--muted);
-      font-size: 16px;
-      margin: 0 0 22px;
+      line-height: 1.6;
       max-width: 700px;
     }
 
-    .badge-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 12px;
-    }
+    .badge-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
 
     .badge {
-      padding: 9px 14px;
       border-radius: 999px;
-      background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.16);
+      background: var(--surface-soft);
       color: var(--muted);
       font-size: 13px;
+      padding: 8px 14px;
     }
 
-    .upload-card,
-    .result-card {
-      padding: 24px;
-      margin-top: 24px;
+    .hero-side .quick-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.8;
     }
+
+    .upload-card, .result-card { margin-bottom: 20px; }
 
     .dropzone {
-      position: relative;
-      border: 2px dashed rgba(255,255,255,0.25);
-      border-radius: 18px;
-      padding: 28px;
-      text-align: center;
-      background: rgba(255,255,255,0.03);
+      border: 2px dashed rgba(255,255,255,0.26);
+      border-radius: 16px;
+      background: rgba(255,255,255,0.035);
+      padding: 24px;
       transition: 0.2s ease;
     }
 
-    .dropzone:hover {
+    .dropzone.dragover {
       border-color: var(--accent);
-      background: rgba(255,255,255,0.05);
-    }
-
-    .dropzone input[type="file"] {
-      display: none;
+      background: rgba(111, 166, 255, 0.14);
     }
 
     .drop-label {
       display: inline-block;
-      padding: 14px 22px;
+      border: none;
       border-radius: 14px;
-      background: linear-gradient(135deg, var(--accent), #9d7bff);
+      padding: 12px 18px;
       color: white;
       font-weight: 700;
+      background: linear-gradient(135deg, #529bfe, #7f74ff);
       cursor: pointer;
-      border: none;
-      transition: transform 0.15s ease;
     }
 
-    .drop-label:hover {
-      transform: translateY(-1px);
-    }
+    input[type="file"] { display: none; }
 
-    .file-name {
-      margin-top: 14px;
+    .file-list {
+      margin: 14px 0 0;
       color: var(--muted);
       font-size: 14px;
-      word-break: break-all;
+      max-height: 120px;
+      overflow: auto;
+      padding-right: 6px;
     }
 
     .action-row {
       display: flex;
-      gap: 12px;
-      margin-top: 18px;
       flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
     }
 
     button {
       border: none;
-      border-radius: 14px;
-      padding: 13px 18px;
-      font-size: 15px;
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 14px;
       font-weight: 700;
       cursor: pointer;
-      transition: 0.18s ease;
+      transition: transform .16s ease;
     }
 
-    .primary {
-      background: linear-gradient(135deg, #52a0fd, #6b73ff);
-      color: white;
-    }
-
-    .secondary {
-      background: rgba(255,255,255,0.08);
-      color: var(--text);
-      border: 1px solid rgba(255,255,255,0.14);
-    }
-
-    button:hover {
-      transform: translateY(-1px);
-      opacity: 0.97;
-    }
+    button:hover { transform: translateY(-1px); }
 
     button:disabled {
       opacity: 0.55;
@@ -184,331 +150,350 @@
       transform: none;
     }
 
+    .primary { background: linear-gradient(135deg, #529bfe, #6d76ff); color: #fff; }
+    .secondary { background: var(--surface-soft); color: var(--text); border: 1px solid rgba(255,255,255,0.17); }
+
     .status {
-      margin-top: 18px;
-      padding: 14px 16px;
-      border-radius: 14px;
+      margin-top: 14px;
+      border-radius: 12px;
       font-size: 14px;
+      padding: 12px 14px;
       display: none;
     }
 
-    .status.ok {
-      display: block;
-      background: rgba(142, 246, 209, 0.12);
-      color: #cffff2;
-      border: 1px solid rgba(142, 246, 209, 0.3);
-    }
-
-    .status.error {
-      display: block;
-      background: rgba(255, 142, 142, 0.12);
-      color: #ffd8d8;
-      border: 1px solid rgba(255, 142, 142, 0.3);
-    }
-
-    .status.info {
-      display: block;
-      background: rgba(110, 168, 254, 0.12);
-      color: #dbe9ff;
-      border: 1px solid rgba(110, 168, 254, 0.25);
-    }
+    .status.info { display: block; background: rgba(110,168,254,.15); border: 1px solid rgba(110,168,254,.28); color: #d9e8ff; }
+    .status.ok { display: block; background: rgba(126,240,201,.12); border: 1px solid rgba(126,240,201,.28); color: #d7fff0; }
+    .status.error { display: block; background: rgba(255,150,150,.12); border: 1px solid rgba(255,150,150,.28); color: #ffd8d8; }
 
     .stats {
+      margin-top: 16px;
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 14px;
-      margin-top: 18px;
+      grid-template-columns: repeat(3, minmax(120px, 1fr));
+      gap: 12px;
     }
 
     .stat {
-      padding: 16px;
-      border-radius: 18px;
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px;
+      padding: 14px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: var(--surface-soft);
     }
 
-    .stat .label {
+    .stat .label { color: var(--muted); font-size: 12px; }
+    .stat .value { font-size: 24px; font-weight: 800; margin-top: 4px; }
+
+    .summary-box,
+    .text-box,
+    .file-result {
+      margin-top: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.2);
+      padding: 14px;
+    }
+
+    .summary-box { color: #f4f7ff; line-height: 1.6; }
+
+    .file-result h3 {
+      margin: 0 0 6px;
+      font-size: 17px;
+    }
+
+    .file-meta {
       color: var(--muted);
       font-size: 13px;
       margin-bottom: 8px;
     }
 
-    .stat .value {
-      font-size: 20px;
-      font-weight: 800;
-      word-break: break-word;
-    }
-
-    .section-title {
-      margin: 22px 0 10px;
-      font-size: 18px;
-    }
-
     .warnings {
-      margin: 0;
+      margin: 8px 0;
       padding-left: 20px;
       color: var(--warning);
+      font-size: 13px;
     }
 
     .text-box {
+      max-height: 220px;
+      overflow: auto;
       white-space: pre-wrap;
       word-break: break-word;
-      background: rgba(0,0,0,0.22);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 18px;
-      padding: 18px;
-      max-height: 460px;
-      overflow: auto;
-      color: #f8fbff;
-      font-size: 14px;
-      line-height: 1.6;
-    }
-
-    .hidden {
-      display: none;
-    }
-
-    .mini-note {
-      color: var(--muted);
       font-size: 13px;
-      margin-top: 10px;
+      line-height: 1.55;
     }
 
-    .top-link {
-      color: var(--accent-2);
-      text-decoration: none;
-      font-weight: 700;
-    }
+    .hidden { display: none; }
 
     @media (max-width: 900px) {
-      .hero {
-        grid-template-columns: 1fr;
-      }
-
-      .stats {
-        grid-template-columns: 1fr 1fr;
-      }
-
-      h1 {
-        font-size: 34px;
-      }
+      .hero { grid-template-columns: 1fr; }
+      h1 { font-size: 34px; }
     }
 
-    @media (max-width: 560px) {
-      .stats {
-        grid-template-columns: 1fr;
-      }
-
-      .hero-main,
-      .hero-side,
-      .upload-card,
-      .result-card {
-        padding: 18px;
-      }
-
-      h1 {
-        font-size: 28px;
-      }
+    @media (max-width: 620px) {
+      .stats { grid-template-columns: 1fr; }
+      h1 { font-size: 28px; }
+      .hero-main, .hero-side, .upload-card, .result-card { padding: 18px; }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="hero">
+    <section class="hero">
       <div class="card hero-main">
-        <h1>PDF Text Extractor</h1>
+        <h1>Multi PDF Extractor + Summary</h1>
         <p class="sub">
-          Upload a PDF invoice, receipt, or scanned document and extract the text locally.
-          The app first tries direct PDF text extraction, then falls back to OCR when needed.
+          Upload multiple PDFs together, process them in one run, review per-file results,
+          and export a Word report with summaries.
         </p>
-
         <div class="badge-row">
-          <div class="badge">Direct text extraction</div>
-          <div class="badge">OCR fallback</div>
-          <div class="badge">Fast local testing</div>
+          <span class="badge">Batch upload</span>
+          <span class="badge">OCR fallback</span>
+          <span class="badge">Word summary export (.docx)</span>
         </div>
       </div>
-
       <div class="card hero-side">
-        <div style="font-size: 14px; color: var(--muted); margin-bottom: 8px;">Local address</div>
-        <div style="font-size: 24px; font-weight: 800; margin-bottom: 12px;">http://127.0.0.1:8000</div>
-        <div style="color: var(--muted); font-size: 14px;">
-          Run the Python file in PyCharm, then open the address above in your browser.
-        </div>
+        <h2 style="font-size: 20px; margin-bottom: 10px;">How it works</h2>
+        <ul class="quick-list">
+          <li>Select one or more PDF files.</li>
+          <li>Click <strong>Extract All PDFs</strong>.</li>
+          <li>Download a summary Word document.</li>
+        </ul>
       </div>
-    </div>
+    </section>
 
-    <div class="card upload-card">
-      <div class="dropzone">
-        <label class="drop-label" for="pdfFile">Choose PDF</label>
-        <input type="file" id="pdfFile" accept=".pdf,application/pdf" />
-        <div class="file-name" id="fileNameLabel">No file selected</div>
+    <section class="card upload-card">
+      <div id="dropzone" class="dropzone">
+        <label class="drop-label" for="pdfFiles">Choose PDF files</label>
+        <input type="file" id="pdfFiles" accept=".pdf,application/pdf" multiple />
+        <div id="fileList" class="file-list">No files selected</div>
 
         <div class="action-row">
-          <button class="primary" id="extractBtn">Extract Text</button>
-          <button class="secondary" id="copyBtn" disabled>Copy Text</button>
-          <button class="secondary" id="downloadBtn" disabled>Download TXT</button>
-        </div>
-
-        <div class="mini-note">
-          Best for digital PDFs and scanned PDFs with OCR fallback.
+          <button id="extractBtn" class="primary">Extract All PDFs</button>
+          <button id="downloadSummaryBtn" class="secondary" disabled>Download Word Summary</button>
+          <button id="copyCombinedBtn" class="secondary" disabled>Copy Combined Text</button>
         </div>
       </div>
 
-      <div id="statusBox" class="status info">Ready.</div>
-    </div>
+      <div id="statusBox" class="status info">Ready to process PDFs.</div>
+    </section>
 
-    <div id="resultCard" class="card result-card hidden">
-      <h2 style="margin-top: 0;">Extraction Result</h2>
-
+    <section id="resultCard" class="card result-card hidden">
+      <h2>Batch Extraction Result</h2>
       <div class="stats">
         <div class="stat">
-          <div class="label">File</div>
-          <div class="value" id="fileName"></div>
+          <div class="label">Files Processed</div>
+          <div class="value" id="fileCount">0</div>
         </div>
         <div class="stat">
-          <div class="label">Pages</div>
-          <div class="value" id="pageCount"></div>
+          <div class="label">Total Characters</div>
+          <div class="value" id="charCount">0</div>
         </div>
         <div class="stat">
-          <div class="label">Characters</div>
-          <div class="value" id="charCount"></div>
-        </div>
-        <div class="stat">
-          <div class="label">Method</div>
-          <div class="value" id="method"></div>
+          <div class="label">Total Pages</div>
+          <div class="value" id="pageCount">0</div>
         </div>
       </div>
 
-      <div id="warningsWrap" class="hidden">
-        <div class="section-title">Warnings</div>
-        <ul id="warningsList" class="warnings"></ul>
-      </div>
+      <h3 style="margin: 18px 0 8px;">Combined Summary</h3>
+      <div id="combinedSummary" class="summary-box">No summary generated yet.</div>
 
-      <div class="section-title">Extracted Text</div>
-      <div class="text-box" id="extractedText"></div>
-    </div>
+      <h3 style="margin: 18px 0 8px;">Per File Results</h3>
+      <div id="resultsList"></div>
+    </section>
   </div>
 
   <script>
-    const pdfFile = document.getElementById("pdfFile");
+    const pdfFilesInput = document.getElementById("pdfFiles");
+    const dropzone = document.getElementById("dropzone");
+    const fileList = document.getElementById("fileList");
     const extractBtn = document.getElementById("extractBtn");
-    const copyBtn = document.getElementById("copyBtn");
-    const downloadBtn = document.getElementById("downloadBtn");
-
-    const fileNameLabel = document.getElementById("fileNameLabel");
+    const downloadSummaryBtn = document.getElementById("downloadSummaryBtn");
+    const copyCombinedBtn = document.getElementById("copyCombinedBtn");
     const statusBox = document.getElementById("statusBox");
-    const resultCard = document.getElementById("resultCard");
 
-    const fileNameEl = document.getElementById("fileName");
+    const resultCard = document.getElementById("resultCard");
+    const fileCountEl = document.getElementById("fileCount");
     const pageCountEl = document.getElementById("pageCount");
     const charCountEl = document.getElementById("charCount");
-    const methodEl = document.getElementById("method");
-    const extractedTextEl = document.getElementById("extractedText");
+    const combinedSummaryEl = document.getElementById("combinedSummary");
+    const resultsList = document.getElementById("resultsList");
 
-    const warningsWrap = document.getElementById("warningsWrap");
-    const warningsList = document.getElementById("warningsList");
-
-    let latestText = "";
-    let latestFileName = "extracted_text.txt";
+    let latestResults = [];
+    let latestCombinedSummary = "";
+    let latestCombinedText = "";
 
     function setStatus(message, type = "info") {
       statusBox.className = `status ${type}`;
       statusBox.textContent = message;
     }
 
-    pdfFile.addEventListener("change", () => {
-      const file = pdfFile.files[0];
-      fileNameLabel.textContent = file ? file.name : "No file selected";
+    function getSelectedFiles() {
+      return Array.from(pdfFilesInput.files || []);
+    }
+
+    function renderFileList(files) {
+      if (!files.length) {
+        fileList.textContent = "No files selected";
+        return;
+      }
+      fileList.innerHTML = files.map((file, i) => `${i + 1}. ${file.name}`).join("<br>");
+    }
+
+    function ensurePdfFiles(files) {
+      return files.filter(file => file.name.toLowerCase().endsWith(".pdf"));
+    }
+
+    function updateResultsView(data) {
+      const files = data.results || [];
+      const totalPages = files.reduce((sum, item) => sum + (item.page_count || 0), 0);
+      latestResults = files;
+      latestCombinedSummary = data.combined_summary || "";
+      latestCombinedText = files.map(item => item.extracted_text || "").join("\n\n");
+
+      fileCountEl.textContent = data.file_count || 0;
+      charCountEl.textContent = data.combined_character_count || 0;
+      pageCountEl.textContent = totalPages;
+      combinedSummaryEl.textContent = latestCombinedSummary || "Summary could not be generated.";
+
+      resultsList.innerHTML = "";
+      files.forEach(item => {
+        const wrap = document.createElement("div");
+        wrap.className = "file-result";
+
+        const warnings = (item.warnings || []).length
+          ? `<ul class=\"warnings\">${item.warnings.map(w => `<li>${w}</li>`).join("")}</ul>`
+          : "";
+
+        wrap.innerHTML = `
+          <h3>${item.file_name || "Unnamed PDF"}</h3>
+          <div class="file-meta">Pages: ${item.page_count ?? "-"} · Characters: ${item.character_count ?? "-"} · Method: ${item.method || "-"}</div>
+          <div><strong>Summary:</strong> ${item.summary || "No summary generated."}</div>
+          ${warnings}
+          <div class="text-box">${(item.extracted_text || "No extracted text.").replace(/</g, "&lt;")}</div>
+        `;
+
+        resultsList.appendChild(wrap);
+      });
+
+      resultCard.classList.remove("hidden");
+      downloadSummaryBtn.disabled = files.length === 0;
+      copyCombinedBtn.disabled = !latestCombinedText;
+    }
+
+    pdfFilesInput.addEventListener("change", () => {
+      const files = ensurePdfFiles(getSelectedFiles());
+      renderFileList(files);
+      if (files.length !== getSelectedFiles().length) {
+        setStatus("Some non-PDF files were ignored. Please upload only PDFs.", "error");
+      } else {
+        setStatus(`${files.length} PDF file(s) selected.`, "info");
+      }
+    });
+
+    ["dragenter", "dragover"].forEach(eventName => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropzone.classList.add("dragover");
+      });
+    });
+
+    ["dragleave", "drop"].forEach(eventName => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropzone.classList.remove("dragover");
+      });
+    });
+
+    dropzone.addEventListener("drop", (event) => {
+      const files = Array.from(event.dataTransfer.files || []);
+      const dt = new DataTransfer();
+      files.forEach(file => dt.items.add(file));
+      pdfFilesInput.files = dt.files;
+      const pdfFiles = ensurePdfFiles(getSelectedFiles());
+      renderFileList(pdfFiles);
+      setStatus(`${pdfFiles.length} PDF file(s) dropped.`, "info");
     });
 
     extractBtn.addEventListener("click", async () => {
-      const file = pdfFile.files[0];
+      const selectedFiles = ensurePdfFiles(getSelectedFiles());
 
-      if (!file) {
-        setStatus("Please choose a PDF file first.", "error");
+      if (!selectedFiles.length) {
+        setStatus("Please choose at least one PDF file.", "error");
         return;
       }
 
       const formData = new FormData();
-      formData.append("file", file);
+      selectedFiles.forEach(file => formData.append("files", file));
 
       extractBtn.disabled = true;
-      copyBtn.disabled = true;
-      downloadBtn.disabled = true;
+      downloadSummaryBtn.disabled = true;
+      copyCombinedBtn.disabled = true;
       resultCard.classList.add("hidden");
-      setStatus("Uploading PDF and extracting text...", "info");
+      setStatus(`Processing ${selectedFiles.length} PDF(s)...`, "info");
 
       try {
-        const response = await fetch("/extract-text", {
+        const response = await fetch("/extract-texts", {
           method: "POST",
           body: formData
         });
 
         const data = await response.json();
-
         if (!response.ok) {
-          throw new Error(data.detail || "Failed to process file.");
+          throw new Error(data.detail || "Failed to process files.");
         }
 
-        latestText = data.extracted_text || "";
-        latestFileName = (data.file_name || "extracted") + ".txt";
-
-        fileNameEl.textContent = data.file_name || "-";
-        pageCountEl.textContent = data.page_count ?? "-";
-        charCountEl.textContent = data.character_count ?? "-";
-        methodEl.textContent = data.method || "-";
-        extractedTextEl.textContent = latestText || "No text found.";
-
-        warningsList.innerHTML = "";
-        if (data.warnings && data.warnings.length > 0) {
-          warningsWrap.classList.remove("hidden");
-          data.warnings.forEach(warning => {
-            const li = document.createElement("li");
-            li.textContent = warning;
-            warningsList.appendChild(li);
-          });
-        } else {
-          warningsWrap.classList.add("hidden");
-        }
-
-        resultCard.classList.remove("hidden");
-        copyBtn.disabled = !latestText;
-        downloadBtn.disabled = !latestText;
-        setStatus("Extraction complete.", "ok");
+        updateResultsView(data);
+        setStatus("Batch extraction complete.", "ok");
       } catch (error) {
-        setStatus(error.message, "error");
+        setStatus(error.message || "Something went wrong.", "error");
       } finally {
         extractBtn.disabled = false;
       }
     });
 
-    copyBtn.addEventListener("click", async () => {
-      if (!latestText) return;
+    copyCombinedBtn.addEventListener("click", async () => {
+      if (!latestCombinedText) return;
 
       try {
-        await navigator.clipboard.writeText(latestText);
-        setStatus("Extracted text copied to clipboard.", "ok");
+        await navigator.clipboard.writeText(latestCombinedText);
+        setStatus("Combined text copied to clipboard.", "ok");
       } catch {
         setStatus("Could not copy text.", "error");
       }
     });
 
-    downloadBtn.addEventListener("click", () => {
-      if (!latestText) return;
+    downloadSummaryBtn.addEventListener("click", async () => {
+      if (!latestResults.length) return;
 
-      const blob = new Blob([latestText], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
+      try {
+        const response = await fetch("/download-summary-docx", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: "PDF Batch Summary Report",
+            combined_summary: latestCombinedSummary,
+            results: latestResults
+          })
+        });
 
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = latestFileName.replace(/\.pdf$/i, "_extracted.txt");
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.detail || "Failed to generate Word summary.");
+        }
 
-      setStatus("Text file downloaded.", "ok");
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "pdf_summary_report.docx";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+
+        setStatus("Word summary downloaded.", "ok");
+      } catch (error) {
+        setStatus(error.message || "Could not download summary.", "error");
+      }
     });
   </script>
 </body>
