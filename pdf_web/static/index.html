@@ -268,7 +268,6 @@
 
         <div class="action-row">
           <button id="extractBtn" class="primary">Extract All PDFs</button>
-          <button id="analyzeScopeBtn" class="primary">Analyze Scope 1/2/3 (Single PDF)</button>
           <button id="downloadSummaryBtn" class="secondary" disabled>Download Word Summary</button>
           <button id="copyCombinedBtn" class="secondary" disabled>Copy Combined Text</button>
         </div>
@@ -300,38 +299,6 @@
       <h3 style="margin: 18px 0 8px;">Per File Results</h3>
       <div id="resultsList"></div>
     </section>
-
-    <section id="scopeCard" class="card result-card hidden">
-      <h2>Scope 1 / 2 / 3 Analysis (Single PDF)</h2>
-      <div id="scopeMeta" class="summary-box"></div>
-
-      <div class="stats">
-        <div class="stat">
-          <div class="label">Scope 1 Mentions</div>
-          <div class="value" id="scope1Mentions">0</div>
-        </div>
-        <div class="stat">
-          <div class="label">Scope 2 Mentions</div>
-          <div class="value" id="scope2Mentions">0</div>
-        </div>
-        <div class="stat">
-          <div class="label">Scope 3 Mentions</div>
-          <div class="value" id="scope3Mentions">0</div>
-        </div>
-      </div>
-
-      <h3 style="margin: 18px 0 8px;">What matters most (material lines)</h3>
-      <div id="materialPoints" class="summary-box"></div>
-
-      <h3 style="margin: 18px 0 8px;">Reporting years + targets</h3>
-      <div id="yearTargetBox" class="summary-box"></div>
-
-      <h3 style="margin: 18px 0 8px;">Key metrics found</h3>
-      <div id="metricsBox" class="summary-box"></div>
-
-      <h3 style="margin: 18px 0 8px;">Recommended next steps</h3>
-      <div id="nextSteps" class="summary-box"></div>
-    </section>
   </div>
 
   <script>
@@ -339,26 +306,16 @@
     const dropzone = document.getElementById("dropzone");
     const fileList = document.getElementById("fileList");
     const extractBtn = document.getElementById("extractBtn");
-    const analyzeScopeBtn = document.getElementById("analyzeScopeBtn");
     const downloadSummaryBtn = document.getElementById("downloadSummaryBtn");
     const copyCombinedBtn = document.getElementById("copyCombinedBtn");
     const statusBox = document.getElementById("statusBox");
 
     const resultCard = document.getElementById("resultCard");
-    const scopeCard = document.getElementById("scopeCard");
     const fileCountEl = document.getElementById("fileCount");
     const pageCountEl = document.getElementById("pageCount");
     const charCountEl = document.getElementById("charCount");
     const combinedSummaryEl = document.getElementById("combinedSummary");
     const resultsList = document.getElementById("resultsList");
-    const scopeMeta = document.getElementById("scopeMeta");
-    const scope1Mentions = document.getElementById("scope1Mentions");
-    const scope2Mentions = document.getElementById("scope2Mentions");
-    const scope3Mentions = document.getElementById("scope3Mentions");
-    const materialPoints = document.getElementById("materialPoints");
-    const yearTargetBox = document.getElementById("yearTargetBox");
-    const metricsBox = document.getElementById("metricsBox");
-    const nextSteps = document.getElementById("nextSteps");
 
     let latestResults = [];
     let latestCombinedSummary = "";
@@ -418,53 +375,8 @@
       });
 
       resultCard.classList.remove("hidden");
-      scopeCard.classList.add("hidden");
       downloadSummaryBtn.disabled = files.length === 0;
       copyCombinedBtn.disabled = !latestCombinedText;
-    }
-
-    function renderList(items, emptyMessage = "No data found.") {
-      if (!items || !items.length) return `<div>${emptyMessage}</div>`;
-      return `<ul>${items.map(item => `<li>${item}</li>`).join("")}</ul>`;
-    }
-
-    function updateScopeView(data) {
-      const analysis = data.scope_analysis || {};
-      const presence = analysis.scope_presence || {};
-
-      const s1 = presence.scope_1 || {};
-      const s2 = presence.scope_2 || {};
-      const s3 = presence.scope_3 || {};
-
-      scopeMeta.innerHTML = `
-        <strong>File:</strong> ${data.file_name || "-"}<br>
-        <strong>Pages:</strong> ${data.page_count ?? "-"} ·
-        <strong>Method:</strong> ${data.method || "-"} ·
-        <strong>Completeness score:</strong> ${(analysis.completeness_score || 0) * 100}%
-      `;
-
-      scope1Mentions.textContent = s1.mentions || 0;
-      scope2Mentions.textContent = s2.mentions || 0;
-      scope3Mentions.textContent = s3.mentions || 0;
-
-      materialPoints.innerHTML = renderList(analysis.material_data_points, "No climate material lines found.");
-      const yearLine = (analysis.reporting_years || []).length
-        ? `<div><strong>Reporting years:</strong> ${analysis.reporting_years.join(", ")}</div>`
-        : "<div><strong>Reporting years:</strong> not found</div>";
-      const targetsLine = renderList(analysis.target_statements, "No target statements found.");
-      yearTargetBox.innerHTML = `${yearLine}${targetsLine}`;
-
-      const metricItems = [
-        ...(analysis.metrics?.scope_1 || []).map(item => `Scope 1: ${item.label} → ${item.value} ${item.unit}`),
-        ...(analysis.metrics?.scope_2 || []).map(item => `Scope 2: ${item.label} → ${item.value} ${item.unit}`),
-        ...(analysis.metrics?.scope_3 || []).map(item => `Scope 3: ${item.label} → ${item.value} ${item.unit}`),
-        ...(analysis.metrics?.other || []).map(item => `Other: ${item.label} → ${item.value} ${item.unit}`)
-      ];
-      metricsBox.innerHTML = renderList(metricItems.slice(0, 20), "No structured numeric metrics found.");
-      nextSteps.innerHTML = renderList(analysis.recommended_next_steps, "No recommendations generated.");
-
-      scopeCard.classList.remove("hidden");
-      resultCard.classList.add("hidden");
     }
 
     pdfFilesInput.addEventListener("change", () => {
@@ -513,11 +425,9 @@
       selectedFiles.forEach(file => formData.append("files", file));
 
       extractBtn.disabled = true;
-      analyzeScopeBtn.disabled = true;
       downloadSummaryBtn.disabled = true;
       copyCombinedBtn.disabled = true;
       resultCard.classList.add("hidden");
-      scopeCard.classList.add("hidden");
       setStatus(`Processing ${selectedFiles.length} PDF(s)...`, "info");
 
       try {
@@ -535,45 +445,6 @@
         setStatus("Batch extraction complete.", "ok");
       } catch (error) {
         setStatus(error.message || "Something went wrong.", "error");
-      } finally {
-        extractBtn.disabled = false;
-        analyzeScopeBtn.disabled = false;
-      }
-    });
-
-    analyzeScopeBtn.addEventListener("click", async () => {
-      const selectedFiles = ensurePdfFiles(getSelectedFiles());
-      if (selectedFiles.length !== 1) {
-        setStatus("Please select exactly one PDF for Scope 1/2/3 analysis.", "error");
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append("file", selectedFiles[0]);
-
-      extractBtn.disabled = true;
-      analyzeScopeBtn.disabled = true;
-      downloadSummaryBtn.disabled = true;
-      copyCombinedBtn.disabled = true;
-      resultCard.classList.add("hidden");
-      scopeCard.classList.add("hidden");
-      setStatus("Running Scope 1/2/3 analysis...", "info");
-
-      try {
-        const response = await fetch("/analyze-esg-scope", {
-          method: "POST",
-          body: formData
-        });
-
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.detail || "Failed to analyze PDF.");
-        }
-
-        updateScopeView(data);
-        setStatus("Scope analysis complete.", "ok");
-      } catch (error) {
-        setStatus(error.message || "Could not analyze scope data.", "error");
       } finally {
         extractBtn.disabled = false;
         analyzeScopeBtn.disabled = false;

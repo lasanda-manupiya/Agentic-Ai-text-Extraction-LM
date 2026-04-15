@@ -6,7 +6,6 @@ Upload one or multiple PDF files and extract text using:
 - Tesseract OCR (fallback for scanned PDFs)
 - Batch processing endpoint for multiple PDFs
 - Word (`.docx`) summary report download
-- Single-PDF Scope 1/2/3 ESG-focused analysis (material lines + metric candidates)
 
 ## Run locally
 

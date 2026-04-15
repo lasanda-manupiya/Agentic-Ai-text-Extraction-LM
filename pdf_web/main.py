@@ -29,29 +29,6 @@ class SummaryRequest(BaseModel):
     results: list[dict] = Field(default_factory=list)
 
 
-SCOPE_KEYWORDS = {
-    "scope_1": [
-        "scope 1", "scope i", "direct emissions", "stationary combustion",
-        "mobile combustion", "fugitive emissions", "onsite fuel",
-    ],
-    "scope_2": [
-        "scope 2", "scope ii", "indirect emissions", "purchased electricity",
-        "purchased steam", "purchased heat", "market-based", "location-based",
-    ],
-    "scope_3": [
-        "scope 3", "scope iii", "value chain emissions", "upstream", "downstream",
-        "purchased goods and services", "business travel", "employee commuting",
-        "waste generated", "capital goods", "use of sold products",
-    ],
-}
-
-MATERIAL_KEYWORDS = [
-    "ghg", "co2", "co2e", "emissions", "energy", "electricity", "renewable",
-    "target", "baseline", "reduction", "intensity", "tco2e", "decarbonization",
-    "science based targets", "sbti", "net zero", "carbon neutral",
-]
-
-
 def _xml_escape(text: str) -> str:
     return (
         text.replace("&", "&amp;")
@@ -204,95 +181,6 @@ def generate_summary(text: str, max_sentences: int = 5) -> str:
     return " ".join(ordered_selected)
 
 
-def _extract_metric_matches(text: str) -> list[dict]:
-    metric_pattern = re.compile(
-        r"(?P<label>[A-Za-z][A-Za-z0-9\s\-/()]{0,80})[:\s]+(?P<value>\d[\d,]*(?:\.\d+)?)\s*(?P<unit>tco2e|co2e|t co2e|mtco2e|kwh|mwh|gwh|%)",
-        re.IGNORECASE,
-    )
-    matches = []
-    for match in metric_pattern.finditer(text):
-        label = " ".join(match.group("label").split())
-        matches.append(
-            {
-                "label": label[-90:].strip(),
-                "value": match.group("value"),
-                "unit": match.group("unit"),
-                "snippet": text[max(0, match.start() - 80): match.end() + 80].strip(),
-            }
-        )
-    return matches[:30]
-
-
-def analyze_scope_data(text: str) -> dict:
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    lowered_lines = [line.lower() for line in lines]
-
-    scope_hits = {"scope_1": [], "scope_2": [], "scope_3": []}
-    for index, lower_line in enumerate(lowered_lines):
-        original_line = lines[index]
-        for scope, keywords in SCOPE_KEYWORDS.items():
-            if any(keyword in lower_line for keyword in keywords):
-                scope_hits[scope].append(original_line)
-
-    material_lines = []
-    for line in lines:
-        lower_line = line.lower()
-        if any(keyword in lower_line for keyword in MATERIAL_KEYWORDS):
-            material_lines.append(line)
-    material_lines = material_lines[:20]
-
-    metric_candidates = _extract_metric_matches(text)
-    metrics_by_scope = {"scope_1": [], "scope_2": [], "scope_3": [], "other": []}
-
-    for metric in metric_candidates:
-        snippet = metric["snippet"].lower()
-        placed = False
-        for scope, keywords in SCOPE_KEYWORDS.items():
-            if any(keyword in snippet for keyword in keywords):
-                metrics_by_scope[scope].append(metric)
-                placed = True
-                break
-        if not placed:
-            metrics_by_scope["other"].append(metric)
-
-    scope_presence = {
-        scope: {
-            "found": bool(items),
-            "mentions": len(items),
-            "sample_lines": items[:5],
-            "metrics": metrics_by_scope.get(scope, [])[:6],
-        }
-        for scope, items in scope_hits.items()
-    }
-
-    year_matches = sorted(set(re.findall(r"\b(20\d{2})\b", text)))
-    year_matches = [year for year in year_matches if 2000 <= int(year) <= 2100]
-
-    target_statements = []
-    for line in lines:
-        lower_line = line.lower()
-        if "target" in lower_line or "reduction" in lower_line or "net zero" in lower_line:
-            target_statements.append(line)
-    target_statements = target_statements[:10]
-
-    completeness_score = sum(1 for scope in scope_presence.values() if scope["found"]) / 3
-
-    return {
-        "scope_presence": scope_presence,
-        "material_data_points": material_lines,
-        "metrics": metrics_by_scope,
-        "reporting_years": year_matches[:8],
-        "target_statements": target_statements,
-        "recommended_next_steps": [
-            "Verify whether Scope 1, 2, and 3 values are reported for the same reporting year.",
-            "Capture base year, target year, and reduction percentage for each target statement.",
-            "Validate units (tCO2e, kWh, MWh, %) and consolidate duplicates before customer reporting.",
-            "Flag missing scope disclosures and request supporting notes for estimation methods.",
-        ],
-        "completeness_score": round(completeness_score, 2),
-    }
-
-
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
@@ -397,45 +285,6 @@ async def extract_texts(files: list[UploadFile] = File(...)):
         "combined_summary": combined_summary,
         "results": extraction_results,
     }
-
-
-@app.post("/analyze-esg-scope")
-async def analyze_esg_scope(file: UploadFile = File(...)):
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file uploaded.")
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
-
-    temp_path = None
-    try:
-        contents = await file.read()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-            temp_file.write(contents)
-            temp_path = temp_file.name
-
-        extracted_text, warnings, page_count, method = extract_pdf_text(temp_path)
-        quick_summary = generate_summary(extracted_text, max_sentences=6)
-        scope_analysis = analyze_scope_data(extracted_text)
-
-        return {
-            "success": True,
-            "file_name": file.filename,
-            "page_count": page_count,
-            "character_count": len(extracted_text),
-            "method": method,
-            "warnings": warnings,
-            "quick_summary": quick_summary,
-            "scope_analysis": scope_analysis,
-            "extracted_text": extracted_text,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if temp_path:
-            try:
-                Path(temp_path).unlink(missing_ok=True)
-            except Exception:
-                pass
 
 
 @app.post("/download-summary-docx")
