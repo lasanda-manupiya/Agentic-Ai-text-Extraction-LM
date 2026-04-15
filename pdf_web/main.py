@@ -265,12 +265,24 @@ def analyze_scope_data(text: str) -> dict:
         for scope, items in scope_hits.items()
     }
 
+    year_matches = sorted(set(re.findall(r"\b(20\d{2})\b", text)))
+    year_matches = [year for year in year_matches if 2000 <= int(year) <= 2100]
+
+    target_statements = []
+    for line in lines:
+        lower_line = line.lower()
+        if "target" in lower_line or "reduction" in lower_line or "net zero" in lower_line:
+            target_statements.append(line)
+    target_statements = target_statements[:10]
+
     completeness_score = sum(1 for scope in scope_presence.values() if scope["found"]) / 3
 
     return {
         "scope_presence": scope_presence,
         "material_data_points": material_lines,
         "metrics": metrics_by_scope,
+        "reporting_years": year_matches[:8],
+        "target_statements": target_statements,
         "recommended_next_steps": [
             "Verify whether Scope 1, 2, and 3 values are reported for the same reporting year.",
             "Capture base year, target year, and reduction percentage for each target statement.",
