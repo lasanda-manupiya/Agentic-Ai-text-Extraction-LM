@@ -250,43 +250,16 @@ def analyze_scope_data(text: str) -> dict:
 
 def analyze_scope_data_with_gpt(text: str) -> dict:
     heuristic = analyze_scope_data(text)
-    diagnostics = {
-        "requested_gpt_analysis": True,
-        "api_key_configured": False,
-        "input_has_text": bool((text or "").strip()),
-        "used_gpt": False,
-        "status": "fallback",
-        "reason": "",
-    }
     api_key = os.getenv("OPENAI_API_KEY")
-    diagnostics["api_key_configured"] = bool(api_key)
-
-    if not diagnostics["input_has_text"]:
-        heuristic["analysis_method"] = "heuristic_fallback"
-        heuristic["model"] = None
-        diagnostics["reason"] = "No extracted text was available to send to GPT."
-        heuristic["troubleshooting"] = diagnostics
-        return heuristic
-
     if not api_key:
         heuristic["analysis_method"] = "heuristic_fallback"
         heuristic["model"] = None
         heuristic["note"] = "OPENAI_API_KEY not configured. Returned heuristic scope analysis."
-        diagnostics["reason"] = "OPENAI_API_KEY is missing."
-        heuristic["troubleshooting"] = diagnostics
         return heuristic
 
-    try:
-        from openai import OpenAI
+    from openai import OpenAI
 
-        client = OpenAI(api_key=api_key)
-    except Exception as exc:
-        heuristic["analysis_method"] = "heuristic_fallback"
-        heuristic["model"] = None
-        diagnostics["reason"] = f"OpenAI client initialization failed: {exc}"
-        heuristic["troubleshooting"] = diagnostics
-        return heuristic
-
+    client = OpenAI(api_key=api_key)
     prompt = """
 You are an ESG analyst. Extract key Scope 1, Scope 2, and Scope 3 reporting points and values.
 Return strict JSON with this schema:
@@ -299,30 +272,19 @@ Return strict JSON with this schema:
 }
 If data is missing, return empty arrays and found=false.
 """
-    try:
-        response = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-            input=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": text[:120000]},
-            ],
-            temperature=0,
-        )
-        raw = response.output_text.strip()
-        data = json.loads(raw)
-        data["analysis_method"] = "gpt"
-        data["model"] = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-        diagnostics["used_gpt"] = True
-        diagnostics["status"] = "connected"
-        diagnostics["reason"] = "Document text was successfully sent to GPT and parsed."
-        data["troubleshooting"] = diagnostics
-        return data
-    except Exception as exc:
-        heuristic["analysis_method"] = "heuristic_fallback"
-        heuristic["model"] = None
-        diagnostics["reason"] = f"GPT request failed: {exc}"
-        heuristic["troubleshooting"] = diagnostics
-        return heuristic
+    response = client.responses.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        input=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": text[:120000]},
+        ],
+        temperature=0,
+    )
+    raw = response.output_text.strip()
+    data = json.loads(raw)
+    data["analysis_method"] = "gpt"
+    data["model"] = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    return data
 
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -443,7 +405,6 @@ async def analyze_esg_scope(files: list[UploadFile] = File(...)):
 
     extraction_results = []
     combined_text_parts = []
-    file_connection_status = []
 
     for file in files:
         if not file.filename:
@@ -474,23 +435,6 @@ async def analyze_esg_scope(files: list[UploadFile] = File(...)):
             )
             if extracted_text:
                 combined_text_parts.append(extracted_text)
-                file_connection_status.append(
-                    {
-                        "file_name": file.filename,
-                        "included_in_gpt_context": True,
-                        "extracted_characters": len(extracted_text),
-                        "reason": "Text extracted successfully and queued for GPT analysis.",
-                    }
-                )
-            else:
-                file_connection_status.append(
-                    {
-                        "file_name": file.filename,
-                        "included_in_gpt_context": False,
-                        "extracted_characters": 0,
-                        "reason": "No text extracted from this file, so nothing was sent for GPT context.",
-                    }
-                )
         finally:
             if temp_path:
                 Path(temp_path).unlink(missing_ok=True)
@@ -502,10 +446,6 @@ async def analyze_esg_scope(files: list[UploadFile] = File(...)):
         "files": extraction_results,
         "combined_character_count": len(combined_text),
         "analysis": ai_analysis,
-        "troubleshooting": {
-            "files": file_connection_status,
-            "gpt_connection": ai_analysis.get("troubleshooting", {}),
-        },
     }
 
 

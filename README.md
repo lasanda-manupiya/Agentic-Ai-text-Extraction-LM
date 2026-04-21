@@ -6,7 +6,6 @@ Upload multiple PDF and image files and extract text using:
 - Tesseract OCR (fallback for scanned PDFs/images)
 - Batch processing endpoint for multiple files
 - GPT-based Scope 1/2/3 extraction for key points and values
-- GPT connection troubleshooting output (shows whether files were sent and why/why not)
 - Word (`.docx`) summary report download
 
 ## Run locally
