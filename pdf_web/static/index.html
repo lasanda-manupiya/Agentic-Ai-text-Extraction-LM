@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PDF Batch Extractor + Summary Export</title>
+  <title>Multi-file Extractor + ESG Scope AI Analysis</title>
   <style>
     :root {
       --bg: #0a1022;
@@ -239,22 +239,23 @@
   <div class="container">
     <section class="hero">
       <div class="card hero-main">
-        <h1>Multi PDF Extractor + Summary</h1>
+        <h1>Multi-file Extractor + ESG Scope AI</h1>
         <p class="sub">
-          Upload multiple PDFs together, process them in one run, review per-file results,
-          and export a Word report with summaries.
+          Upload multiple PDFs and images together, process them in one run, review per-file results,
+          and run GPT-based Scope 1-3 analysis with key points and values.
         </p>
         <div class="badge-row">
-          <span class="badge">Batch upload</span>
+          <span class="badge">Batch upload (PDF + images)</span>
           <span class="badge">OCR fallback</span>
-          <span class="badge">Word summary export (.docx)</span>
+          <span class="badge">GPT Scope 1-3 extraction</span>
         </div>
       </div>
       <div class="card hero-side">
         <h2 style="font-size: 20px; margin-bottom: 10px;">How it works</h2>
         <ul class="quick-list">
-          <li>Select one or more PDF files.</li>
-          <li>Click <strong>Extract All PDFs</strong>.</li>
+          <li>Select one or more PDF or image files.</li>
+          <li>Click <strong>Extract All Files</strong>.</li>
+          <li>Click <strong>Analyze Scope 1-3 (AI)</strong>.</li>
           <li>Download a summary Word document.</li>
         </ul>
       </div>
@@ -262,12 +263,13 @@
 
     <section class="card upload-card">
       <div id="dropzone" class="dropzone">
-        <label class="drop-label" for="pdfFiles">Choose PDF files</label>
-        <input type="file" id="pdfFiles" accept=".pdf,application/pdf" multiple />
+        <label class="drop-label" for="pdfFiles">Choose files (PDF / image)</label>
+        <input type="file" id="pdfFiles" accept=".pdf,application/pdf,image/*" multiple />
         <div id="fileList" class="file-list">No files selected</div>
 
         <div class="action-row">
-          <button id="extractBtn" class="primary">Extract All PDFs</button>
+          <button id="extractBtn" class="primary">Extract All Files</button>
+          <button id="analyzeScopeBtn" class="secondary">Analyze Scope 1-3 (AI)</button>
           <button id="downloadSummaryBtn" class="secondary" disabled>Download Word Summary</button>
           <button id="copyCombinedBtn" class="secondary" disabled>Copy Combined Text</button>
         </div>
@@ -298,6 +300,9 @@
 
       <h3 style="margin: 18px 0 8px;">Per File Results</h3>
       <div id="resultsList"></div>
+
+      <h3 style="margin: 18px 0 8px;">AI Scope 1-3 Analysis</h3>
+      <div id="scopeAnalysis" class="summary-box">No AI analysis generated yet.</div>
     </section>
   </div>
 
@@ -306,6 +311,7 @@
     const dropzone = document.getElementById("dropzone");
     const fileList = document.getElementById("fileList");
     const extractBtn = document.getElementById("extractBtn");
+    const analyzeScopeBtn = document.getElementById("analyzeScopeBtn");
     const downloadSummaryBtn = document.getElementById("downloadSummaryBtn");
     const copyCombinedBtn = document.getElementById("copyCombinedBtn");
     const statusBox = document.getElementById("statusBox");
@@ -316,6 +322,7 @@
     const charCountEl = document.getElementById("charCount");
     const combinedSummaryEl = document.getElementById("combinedSummary");
     const resultsList = document.getElementById("resultsList");
+    const scopeAnalysisEl = document.getElementById("scopeAnalysis");
 
     let latestResults = [];
     let latestCombinedSummary = "";
@@ -338,8 +345,11 @@
       fileList.innerHTML = files.map((file, i) => `${i + 1}. ${file.name}`).join("<br>");
     }
 
-    function ensurePdfFiles(files) {
-      return files.filter(file => file.name.toLowerCase().endsWith(".pdf"));
+    function ensureSupportedFiles(files) {
+      return files.filter(file => {
+        const lower = file.name.toLowerCase();
+        return lower.endsWith(".pdf") || file.type.startsWith("image/");
+      });
     }
 
     function updateResultsView(data) {
@@ -380,12 +390,12 @@
     }
 
     pdfFilesInput.addEventListener("change", () => {
-      const files = ensurePdfFiles(getSelectedFiles());
+      const files = ensureSupportedFiles(getSelectedFiles());
       renderFileList(files);
       if (files.length !== getSelectedFiles().length) {
-        setStatus("Some non-PDF files were ignored. Please upload only PDFs.", "error");
+        setStatus("Some unsupported files were ignored. Please upload only PDF/image files.", "error");
       } else {
-        setStatus(`${files.length} PDF file(s) selected.`, "info");
+        setStatus(`${files.length} file(s) selected.`, "info");
       }
     });
 
@@ -408,16 +418,16 @@
       const dt = new DataTransfer();
       files.forEach(file => dt.items.add(file));
       pdfFilesInput.files = dt.files;
-      const pdfFiles = ensurePdfFiles(getSelectedFiles());
-      renderFileList(pdfFiles);
-      setStatus(`${pdfFiles.length} PDF file(s) dropped.`, "info");
+      const supportedFiles = ensureSupportedFiles(getSelectedFiles());
+      renderFileList(supportedFiles);
+      setStatus(`${supportedFiles.length} supported file(s) dropped.`, "info");
     });
 
     extractBtn.addEventListener("click", async () => {
-      const selectedFiles = ensurePdfFiles(getSelectedFiles());
+      const selectedFiles = ensureSupportedFiles(getSelectedFiles());
 
       if (!selectedFiles.length) {
-        setStatus("Please choose at least one PDF file.", "error");
+        setStatus("Please choose at least one supported file.", "error");
         return;
       }
 
@@ -427,8 +437,9 @@
       extractBtn.disabled = true;
       downloadSummaryBtn.disabled = true;
       copyCombinedBtn.disabled = true;
+      analyzeScopeBtn.disabled = true;
       resultCard.classList.add("hidden");
-      setStatus(`Processing ${selectedFiles.length} PDF(s)...`, "info");
+      setStatus(`Processing ${selectedFiles.length} file(s)...`, "info");
 
       try {
         const response = await fetch("/extract-texts", {
@@ -448,6 +459,54 @@
       } finally {
         extractBtn.disabled = false;
         analyzeScopeBtn.disabled = false;
+      }
+    });
+
+    analyzeScopeBtn.addEventListener("click", async () => {
+      const selectedFiles = ensureSupportedFiles(getSelectedFiles());
+      if (!selectedFiles.length) {
+        setStatus("Please choose at least one supported file.", "error");
+        return;
+      }
+
+      const formData = new FormData();
+      selectedFiles.forEach(file => formData.append("files", file));
+
+      analyzeScopeBtn.disabled = true;
+      extractBtn.disabled = true;
+      setStatus("Running GPT scope analysis...", "info");
+
+      try {
+        const response = await fetch("/analyze-esg-scope", {
+          method: "POST",
+          body: formData
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "Scope analysis failed.");
+        }
+        const analysis = data.analysis || {};
+        const points = analysis.important_points || [];
+        const metrics = analysis.metrics || [];
+        scopeAnalysisEl.innerHTML = `
+          <div><strong>Method:</strong> ${analysis.analysis_method || "-"}</div>
+          <div><strong>Model:</strong> ${analysis.model || "-"}</div>
+          <div><strong>Scope 1:</strong> ${analysis.scope_presence?.scope_1?.found ? "Found" : "Not Found"}</div>
+          <div><strong>Scope 2:</strong> ${analysis.scope_presence?.scope_2?.found ? "Found" : "Not Found"}</div>
+          <div><strong>Scope 3:</strong> ${analysis.scope_presence?.scope_3?.found ? "Found" : "Not Found"}</div>
+          <div><strong>Years:</strong> ${(analysis.reporting_years || []).join(", ") || "None"}</div>
+          <div style="margin-top:8px;"><strong>Important points:</strong></div>
+          <ul>${points.map(point => `<li>${point}</li>`).join("") || "<li>No points extracted.</li>"}</ul>
+          <div style="margin-top:8px;"><strong>Key values:</strong></div>
+          <ul>${metrics.slice(0, 12).map(metric => `<li>${metric.scope || "unknown"} · ${metric.category || "-"}: ${metric.value || "-"} ${metric.unit || ""} (${metric.year || "-"})</li>`).join("") || "<li>No values extracted.</li>"}</ul>
+        `;
+        resultCard.classList.remove("hidden");
+        setStatus("Scope analysis complete.", "ok");
+      } catch (error) {
+        setStatus(error.message || "Scope analysis failed.", "error");
+      } finally {
+        analyzeScopeBtn.disabled = false;
+        extractBtn.disabled = false;
       }
     });
 
