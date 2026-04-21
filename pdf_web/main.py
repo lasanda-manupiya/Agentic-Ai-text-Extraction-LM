@@ -44,58 +44,113 @@ def _xml_escape(text: str) -> str:
     )
 
 
-def build_docx_bytes(paragraphs: list[str]) -> bytes:
-    paragraph_xml = []
-    for paragraph in paragraphs:
-        cleaned = _xml_escape(paragraph or "")
-        paragraph_xml.append(
-            f"<w:p><w:r><w:t xml:space=\"preserve\">{cleaned}</w:t></w:r></w:p>"
-        )
+def build_summary_pdf_bytes(title: str, combined_summary: str, results: list[dict]) -> bytes:
+    doc = fitz.open()
+    page = doc.new_page()
+    margin = 50
+    y = margin
+    page_height = page.rect.height
+    content_width = page.rect.width - (margin * 2)
 
-    document_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
- xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
- xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"
- xmlns:v="urn:schemas-microsoft-com:vml"
- xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
- xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
- xmlns:w10="urn:schemas-microsoft-com:office:word"
- xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
- xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
- xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
- xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk"
- xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml"
- xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
- mc:Ignorable="w14 wp14">
-  <w:body>
-    {''.join(paragraph_xml)}
-    <w:sectPr>
-      <w:pgSz w:w="12240" w:h="15840"/>
-      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>
-    </w:sectPr>
-  </w:body>
-</w:document>"""
+    def add_line(text: str, fontsize: int = 11, spacing: float = 16.0, is_bold: bool = False):
+        nonlocal page, y
+        if y > page_height - margin:
+            page = doc.new_page()
+            y = margin
+        fontname = "helv" if not is_bold else "helv"
+        page.insert_text((margin, y), text, fontsize=fontsize, fontname=fontname)
+        y += spacing
 
-    content_types_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-</Types>"""
+    def add_paragraph(text: str, fontsize: int = 11, spacing_after: float = 10.0):
+        nonlocal page, y
+        chunks = re.split(r"(?<=[.!?])\s+", (text or "").strip()) or [""]
+        for sentence in chunks:
+            if not sentence:
+                continue
+            rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
+            used = page.insert_textbox(rect, sentence, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+            if used < 0:
+                page = doc.new_page()
+                y = margin
+                rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
+                page.insert_textbox(rect, sentence, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+            y += max(16, fontsize + 6)
+        y += spacing_after
 
-    rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-</Relationships>"""
+    add_line(title or "PDF Extraction Summary", fontsize=16, spacing=24, is_bold=True)
+    add_line("Combined Summary", fontsize=13, spacing=18, is_bold=True)
+    add_paragraph(combined_summary or "No combined summary generated.")
 
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", content_types_xml)
-        archive.writestr("_rels/.rels", rels_xml)
-        archive.writestr("word/document.xml", document_xml)
-    return buffer.getvalue()
+    if results:
+        add_line("Per-file Summaries", fontsize=13, spacing=18, is_bold=True)
+        for item in results:
+            add_line(f"- {item.get('file_name', 'Unknown file')}", fontsize=11, spacing=14, is_bold=True)
+            file_summary = item.get("summary", "")
+            add_paragraph(file_summary or "No summary generated.", fontsize=10, spacing_after=8)
+
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
+def _extract_tables_from_pdf_page(page: fitz.Page, page_number: int) -> list[dict]:
+    tables = []
+    try:
+        found_tables = page.find_tables()
+    except Exception:
+        return tables
+
+    for idx, table in enumerate(found_tables.tables, start=1):
+        rows = table.extract()
+        cleaned_rows = []
+        for row in rows:
+            cleaned_rows.append([(cell or "").strip() for cell in row])
+        if cleaned_rows:
+            tables.append(
+                {
+                    "source": "pdf",
+                    "page": page_number,
+                    "table_index": idx,
+                    "rows": cleaned_rows,
+                }
+            )
+    return tables
+
+
+def _extract_structured_rows_from_image(file_path: str) -> list[dict]:
+    with Image.open(file_path) as image:
+        data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+
+    rows_by_key: dict[tuple[int, int, int], list[tuple[int, str]]] = {}
+    total_items = len(data.get("text", []))
+    for i in range(total_items):
+        text = (data["text"][i] or "").strip()
+        if not text:
+            continue
+        conf = int(data["conf"][i]) if str(data["conf"][i]).lstrip("-").isdigit() else -1
+        if conf < 35:
+            continue
+        key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+        rows_by_key.setdefault(key, []).append((data["left"][i], text))
+
+    rows = []
+    for key in sorted(rows_by_key):
+        row_tokens = sorted(rows_by_key[key], key=lambda token: token[0])
+        if len(row_tokens) < 2:
+            continue
+        rows.append([token[1] for token in row_tokens])
+
+    if not rows:
+        return []
+
+    return [
+        {
+            "source": "image",
+            "page": 1,
+            "table_index": 1,
+            "rows": rows,
+        }
+    ]
 
 
 def extract_pdf_text_with_ocr(file_path: str) -> str:
@@ -120,9 +175,10 @@ def extract_image_text(file_path: str) -> str:
         return pytesseract.image_to_string(image).strip()
 
 
-def extract_pdf_text(file_path: str) -> tuple[str, list[str], int, str]:
+def extract_pdf_text(file_path: str) -> tuple[str, list[str], int, str, dict]:
     warnings = []
     text_parts = []
+    structured_data = {"tables": [], "image_count": 0}
 
     doc = fitz.open(file_path)
     try:
@@ -134,13 +190,19 @@ def extract_pdf_text(file_path: str) -> tuple[str, list[str], int, str]:
                 text_parts.append(page_text)
             else:
                 warnings.append(f"No extractable text found on page {page_number}.")
+            structured_data["tables"].extend(_extract_tables_from_pdf_page(page, page_number))
+            structured_data["image_count"] += len(page.get_images(full=True))
     finally:
         doc.close()
 
     extracted_text = "\n\n".join(text_parts).strip()
+    if structured_data["tables"]:
+        warnings.append(f"Detected {len(structured_data['tables'])} table(s) in PDF.")
+    if structured_data["image_count"]:
+        warnings.append(f"Detected {structured_data['image_count']} embedded image(s) in PDF.")
 
     if extracted_text:
-        return extracted_text, warnings, page_count, "Direct PDF text"
+        return extracted_text, warnings, page_count, "Direct PDF text", structured_data
 
     warnings.append("No embedded text found. OCR fallback used.")
     ocr_text = extract_pdf_text_with_ocr(file_path)
@@ -150,20 +212,23 @@ def extract_pdf_text(file_path: str) -> tuple[str, list[str], int, str]:
     else:
         warnings.append("Text extracted with OCR.")
 
-    return ocr_text, warnings, page_count, "OCR"
+    return ocr_text, warnings, page_count, "OCR", structured_data
 
 
-def extract_text_from_file(file_path: str, extension: str) -> tuple[str, list[str], int, str]:
+def extract_text_from_file(file_path: str, extension: str) -> tuple[str, list[str], int, str, dict]:
     if extension == ".pdf":
         return extract_pdf_text(file_path)
 
     text = extract_image_text(file_path)
+    tables = _extract_structured_rows_from_image(file_path)
     warnings: list[str] = []
     if not text:
         warnings.append("OCR found no text in the image.")
     else:
         warnings.append("Text extracted from image using OCR.")
-    return text, warnings, 1, "Image OCR"
+    if tables:
+        warnings.append(f"Detected probable table rows in image ({len(tables)} table block).")
+    return text, warnings, 1, "Image OCR", {"tables": tables, "image_count": 1}
 
 
 def generate_summary(text: str, max_sentences: int = 5) -> str:
@@ -251,10 +316,25 @@ def analyze_scope_data(text: str) -> dict:
 def analyze_scope_data_with_gpt(text: str) -> dict:
     heuristic = analyze_scope_data(text)
     api_key = os.getenv("OPENAI_API_KEY")
+    input_has_text = bool((text or "").strip())
+    heuristic["troubleshooting"] = {
+        "used_gpt": False,
+        "input_has_text": input_has_text,
+        "reason": "",
+    }
+
+    if not input_has_text:
+        heuristic["analysis_method"] = "heuristic_fallback"
+        heuristic["model"] = None
+        heuristic["note"] = "No extracted text available. Returned heuristic scope analysis."
+        heuristic["troubleshooting"]["reason"] = "No extracted text to analyze."
+        return heuristic
+
     if not api_key:
         heuristic["analysis_method"] = "heuristic_fallback"
         heuristic["model"] = None
         heuristic["note"] = "OPENAI_API_KEY not configured. Returned heuristic scope analysis."
+        heuristic["troubleshooting"]["reason"] = "OPENAI_API_KEY not configured."
         return heuristic
 
     from openai import OpenAI
@@ -284,6 +364,11 @@ If data is missing, return empty arrays and found=false.
     data = json.loads(raw)
     data["analysis_method"] = "gpt"
     data["model"] = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    data["troubleshooting"] = {
+        "used_gpt": True,
+        "input_has_text": input_has_text,
+        "reason": "",
+    }
     return data
 
 
@@ -313,7 +398,7 @@ async def extract_text(file: UploadFile = File(...)):
             temp_file.write(contents)
             temp_path = temp_file.name
 
-        extracted_text, warnings, page_count, method = extract_text_from_file(temp_path, extension)
+        extracted_text, warnings, page_count, method, structured_data = extract_text_from_file(temp_path, extension)
 
         return {
             "success": True,
@@ -322,6 +407,7 @@ async def extract_text(file: UploadFile = File(...)):
             "character_count": len(extracted_text),
             "method": method,
             "warnings": warnings,
+            "structured_data": structured_data,
             "extracted_text": extracted_text,
         }
 
@@ -361,7 +447,7 @@ async def extract_texts(files: list[UploadFile] = File(...)):
                 temp_file.write(contents)
                 temp_path = temp_file.name
 
-            extracted_text, warnings, page_count, method = extract_text_from_file(temp_path, extension)
+            extracted_text, warnings, page_count, method, structured_data = extract_text_from_file(temp_path, extension)
             summary = generate_summary(extracted_text)
 
             extraction_results.append(
@@ -372,6 +458,7 @@ async def extract_texts(files: list[UploadFile] = File(...)):
                     "character_count": len(extracted_text),
                     "method": method,
                     "warnings": warnings,
+                    "structured_data": structured_data,
                     "summary": summary,
                     "extracted_text": extracted_text,
                 }
@@ -423,13 +510,14 @@ async def analyze_esg_scope(files: list[UploadFile] = File(...)):
                 temp_file.write(contents)
                 temp_path = temp_file.name
 
-            extracted_text, warnings, page_count, method = extract_text_from_file(temp_path, extension)
+            extracted_text, warnings, page_count, method, structured_data = extract_text_from_file(temp_path, extension)
             extraction_results.append(
                 {
                     "file_name": file.filename,
                     "page_count": page_count,
                     "method": method,
                     "warnings": warnings,
+                    "structured_data": structured_data,
                     "character_count": len(extracted_text),
                 }
             )
@@ -449,33 +537,22 @@ async def analyze_esg_scope(files: list[UploadFile] = File(...)):
     }
 
 
-@app.post("/download-summary-docx")
-def download_summary_docx(payload: SummaryRequest):
-    paragraphs = [payload.title or "PDF Extraction Summary", ""]
-    if payload.combined_summary:
-        paragraphs.extend(["Combined Summary", payload.combined_summary, ""])
+@app.post("/download-summary-pdf")
+def download_summary_pdf(payload: SummaryRequest):
+    pdf_bytes = build_summary_pdf_bytes(
+        title=payload.title or "PDF Extraction Summary",
+        combined_summary=payload.combined_summary,
+        results=payload.results,
+    )
 
-    for item in payload.results:
-        file_name = item.get("file_name", "Unknown file")
-        paragraphs.append(file_name)
-        paragraphs.append(
-            f"Pages: {item.get('page_count', '-')} | Characters: {item.get('character_count', '-')} | Method: {item.get('method', '-')}"
-        )
-        summary = item.get("summary", "")
-        if summary:
-            paragraphs.append(f"Summary: {summary}")
-        paragraphs.append("")
-
-    docx_bytes = build_docx_bytes(paragraphs)
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as temp_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
         temp_path = Path(temp_file.name)
-        temp_path.write_bytes(docx_bytes)
+        temp_path.write_bytes(pdf_bytes)
 
     return FileResponse(
         path=temp_path,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename="pdf_summary_report.docx",
+        media_type="application/pdf",
+        filename="pdf_summary_report.pdf",
         background=BackgroundTask(lambda: temp_path.unlink(missing_ok=True)),
     )
 

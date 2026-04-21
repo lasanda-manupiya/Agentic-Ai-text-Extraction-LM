@@ -256,7 +256,7 @@
           <li>Select one or more PDF or image files.</li>
           <li>Click <strong>Extract All Files</strong>.</li>
           <li>Click <strong>Analyze Scope 1-3 (AI)</strong>.</li>
-          <li>Download a summary Word document.</li>
+          <li>Download a summary PDF document.</li>
         </ul>
       </div>
     </section>
@@ -270,7 +270,7 @@
         <div class="action-row">
           <button id="extractBtn" class="primary">Extract All Files</button>
           <button id="analyzeScopeBtn" class="secondary">Analyze Scope 1-3 (AI)</button>
-          <button id="downloadSummaryBtn" class="secondary" disabled>Download Word Summary</button>
+          <button id="downloadSummaryBtn" class="secondary" disabled>Download Summary PDF</button>
           <button id="copyCombinedBtn" class="secondary" disabled>Copy Combined Text</button>
         </div>
       </div>
@@ -377,6 +377,8 @@
           <h3>${item.file_name || "Unnamed PDF"}</h3>
           <div class="file-meta">Pages: ${item.page_count ?? "-"} · Characters: ${item.character_count ?? "-"} · Method: ${item.method || "-"}</div>
           <div><strong>Summary:</strong> ${item.summary || "No summary generated."}</div>
+          <div><strong>Detected tables:</strong> ${(item.structured_data?.tables || []).length}</div>
+          <div><strong>Detected images:</strong> ${item.structured_data?.image_count ?? 0}</div>
           ${warnings}
           <div class="text-box">${(item.extracted_text || "No extracted text.").replace(/</g, "&lt;")}</div>
         `;
@@ -525,7 +527,7 @@
       if (!latestResults.length) return;
 
       try {
-        const response = await fetch("/download-summary-docx", {
+        const response = await fetch("/download-summary-pdf", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -537,22 +539,22 @@
 
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.detail || "Failed to generate Word summary.");
+          throw new Error(errData.detail || "Failed to generate PDF summary.");
         }
 
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = "pdf_summary_report.docx";
+        link.download = "pdf_summary_report.pdf";
         document.body.appendChild(link);
         link.click();
         link.remove();
         URL.revokeObjectURL(url);
 
-        setStatus("Word summary downloaded.", "ok");
+        setStatus("Summary PDF downloaded.", "ok");
       } catch (error) {
-        setStatus(error.message || "Could not download summary.", "error");
+        setStatus(error.message || "Could not download PDF summary.", "error");
       }
     });
   </script>
