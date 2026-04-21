@@ -1,6 +1,7 @@
 import unittest
+import os
 
-from pdf_web.main import analyze_scope_data
+from pdf_web.main import analyze_scope_data, analyze_scope_data_with_gpt
 
 
 class ScopeAnalysisTests(unittest.TestCase):
@@ -28,6 +29,32 @@ class ScopeAnalysisTests(unittest.TestCase):
         self.assertFalse(result["scope_presence"]["scope_3"]["found"])
         self.assertEqual(result["reporting_years"], [])
         self.assertEqual(result["target_statements"], [])
+
+    def test_gpt_fallback_exposes_missing_key_reason(self):
+        previous_key = os.environ.pop("OPENAI_API_KEY", None)
+        try:
+            result = analyze_scope_data_with_gpt("Scope 1 emissions 2024: 100 tCO2e")
+            troubleshooting = result.get("troubleshooting", {})
+
+            self.assertEqual(result.get("analysis_method"), "heuristic_fallback")
+            self.assertFalse(troubleshooting.get("used_gpt"))
+            self.assertIn("OPENAI_API_KEY", troubleshooting.get("reason", ""))
+        finally:
+            if previous_key is not None:
+                os.environ["OPENAI_API_KEY"] = previous_key
+
+    def test_gpt_fallback_exposes_empty_text_reason(self):
+        previous_key = os.environ.pop("OPENAI_API_KEY", None)
+        try:
+            result = analyze_scope_data_with_gpt("")
+            troubleshooting = result.get("troubleshooting", {})
+
+            self.assertEqual(result.get("analysis_method"), "heuristic_fallback")
+            self.assertFalse(troubleshooting.get("input_has_text"))
+            self.assertIn("No extracted text", troubleshooting.get("reason", ""))
+        finally:
+            if previous_key is not None:
+                os.environ["OPENAI_API_KEY"] = previous_key
 
 
 if __name__ == "__main__":

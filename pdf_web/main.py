@@ -1,5 +1,7 @@
 from collections import Counter
 import io
+import json
+import os
 import re
 from pathlib import Path
 import tempfile
@@ -27,6 +29,9 @@ class SummaryRequest(BaseModel):
     title: str = Field(default="PDF Extraction Summary")
     combined_summary: str = Field(default="")
     results: list[dict] = Field(default_factory=list)
+
+
+SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
 
 def _xml_escape(text: str) -> str:
@@ -110,6 +115,11 @@ def extract_pdf_text_with_ocr(file_path: str) -> str:
     return "\n\n".join(ocr_parts).strip()
 
 
+def extract_image_text(file_path: str) -> str:
+    with Image.open(file_path) as image:
+        return pytesseract.image_to_string(image).strip()
+
+
 def extract_pdf_text(file_path: str) -> tuple[str, list[str], int, str]:
     warnings = []
     text_parts = []
@@ -141,6 +151,19 @@ def extract_pdf_text(file_path: str) -> tuple[str, list[str], int, str]:
         warnings.append("Text extracted with OCR.")
 
     return ocr_text, warnings, page_count, "OCR"
+
+
+def extract_text_from_file(file_path: str, extension: str) -> tuple[str, list[str], int, str]:
+    if extension == ".pdf":
+        return extract_pdf_text(file_path)
+
+    text = extract_image_text(file_path)
+    warnings: list[str] = []
+    if not text:
+        warnings.append("OCR found no text in the image.")
+    else:
+        warnings.append("Text extracted from image using OCR.")
+    return text, warnings, 1, "Image OCR"
 
 
 def generate_summary(text: str, max_sentences: int = 5) -> str:
@@ -181,6 +204,127 @@ def generate_summary(text: str, max_sentences: int = 5) -> str:
     return " ".join(ordered_selected)
 
 
+def analyze_scope_data(text: str) -> dict:
+    normalized = text or ""
+    years = sorted(set(re.findall(r"\b(?:19|20)\d{2}\b", normalized)))
+
+    number_pattern = re.compile(
+        r"(scope\s*[1-3][^.\n:]*[:\-]?\s*)([\d,]+(?:\.\d+)?)\s*(tco2e|mtco2e|kgco2e|co2e)?",
+        flags=re.IGNORECASE,
+    )
+    metrics = []
+    for match in number_pattern.finditer(normalized):
+        metrics.append(
+            {
+                "label": match.group(1).strip(),
+                "value": match.group(2).replace(",", ""),
+                "unit": (match.group(3) or "").lower(),
+                "raw": match.group(0).strip(),
+            }
+        )
+
+    target_statements = re.findall(
+        r"([^.]*\b(target|reduce|reduction|net[- ]zero|decarboni[sz]ation)\b[^.]*)",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    target_lines = [statement[0].strip() for statement in target_statements if statement[0].strip()]
+
+    def scope_presence(scope_label: str) -> dict:
+        scope_pattern = scope_label.replace(" ", r"\s*")
+        pattern = re.compile(rf"\b{scope_pattern}\b", re.IGNORECASE)
+        found = bool(pattern.search(normalized))
+        return {"found": found}
+
+    return {
+        "scope_presence": {
+            "scope_1": scope_presence("scope 1"),
+            "scope_2": scope_presence("scope 2"),
+            "scope_3": scope_presence("scope 3"),
+        },
+        "reporting_years": years,
+        "metrics": metrics[:30],
+        "target_statements": target_lines[:20],
+    }
+
+
+def analyze_scope_data_with_gpt(text: str) -> dict:
+    heuristic = analyze_scope_data(text)
+    diagnostics = {
+        "requested_gpt_analysis": True,
+        "api_key_configured": False,
+        "input_has_text": bool((text or "").strip()),
+        "used_gpt": False,
+        "status": "fallback",
+        "reason": "",
+    }
+    api_key = os.getenv("OPENAI_API_KEY")
+    diagnostics["api_key_configured"] = bool(api_key)
+
+    if not diagnostics["input_has_text"]:
+        heuristic["analysis_method"] = "heuristic_fallback"
+        heuristic["model"] = None
+        diagnostics["reason"] = "No extracted text was available to send to GPT."
+        heuristic["troubleshooting"] = diagnostics
+        return heuristic
+
+    if not api_key:
+        heuristic["analysis_method"] = "heuristic_fallback"
+        heuristic["model"] = None
+        heuristic["note"] = "OPENAI_API_KEY not configured. Returned heuristic scope analysis."
+        diagnostics["reason"] = "OPENAI_API_KEY is missing."
+        heuristic["troubleshooting"] = diagnostics
+        return heuristic
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=api_key)
+    except Exception as exc:
+        heuristic["analysis_method"] = "heuristic_fallback"
+        heuristic["model"] = None
+        diagnostics["reason"] = f"OpenAI client initialization failed: {exc}"
+        heuristic["troubleshooting"] = diagnostics
+        return heuristic
+
+    prompt = """
+You are an ESG analyst. Extract key Scope 1, Scope 2, and Scope 3 reporting points and values.
+Return strict JSON with this schema:
+{
+  "scope_presence": {"scope_1": {"found": bool}, "scope_2": {"found": bool}, "scope_3": {"found": bool}},
+  "reporting_years": [string],
+  "metrics": [{"scope": "scope_1|scope_2|scope_3|unknown", "category": string, "value": string, "unit": string, "year": string, "source_snippet": string}],
+  "target_statements": [string],
+  "important_points": [string]
+}
+If data is missing, return empty arrays and found=false.
+"""
+    try:
+        response = client.responses.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+            input=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": text[:120000]},
+            ],
+            temperature=0,
+        )
+        raw = response.output_text.strip()
+        data = json.loads(raw)
+        data["analysis_method"] = "gpt"
+        data["model"] = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+        diagnostics["used_gpt"] = True
+        diagnostics["status"] = "connected"
+        diagnostics["reason"] = "Document text was successfully sent to GPT and parsed."
+        data["troubleshooting"] = diagnostics
+        return data
+    except Exception as exc:
+        heuristic["analysis_method"] = "heuristic_fallback"
+        heuristic["model"] = None
+        diagnostics["reason"] = f"GPT request failed: {exc}"
+        heuristic["troubleshooting"] = diagnostics
+        return heuristic
+
+
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
@@ -194,19 +338,20 @@ async def extract_text(file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded.")
 
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    extension = Path(file.filename).suffix.lower()
+    if extension not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Supported types: PDF and common image formats.")
 
     temp_path = None
 
     try:
         contents = await file.read()
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
             temp_file.write(contents)
             temp_path = temp_file.name
 
-        extracted_text, warnings, page_count, method = extract_pdf_text(temp_path)
+        extracted_text, warnings, page_count, method = extract_text_from_file(temp_path, extension)
 
         return {
             "success": True,
@@ -240,17 +385,21 @@ async def extract_texts(files: list[UploadFile] = File(...)):
     for file in files:
         if not file.filename:
             continue
-        if not file.filename.lower().endswith(".pdf"):
-            raise HTTPException(status_code=400, detail=f"Only PDF files are supported. Invalid file: {file.filename}")
+        extension = Path(file.filename).suffix.lower()
+        if extension not in SUPPORTED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only PDF and image files are supported. Invalid file: {file.filename}",
+            )
 
         temp_path = None
         try:
             contents = await file.read()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
                 temp_file.write(contents)
                 temp_path = temp_file.name
 
-            extracted_text, warnings, page_count, method = extract_pdf_text(temp_path)
+            extracted_text, warnings, page_count, method = extract_text_from_file(temp_path, extension)
             summary = generate_summary(extracted_text)
 
             extraction_results.append(
@@ -284,6 +433,79 @@ async def extract_texts(files: list[UploadFile] = File(...)):
         "combined_character_count": len(combined_text),
         "combined_summary": combined_summary,
         "results": extraction_results,
+    }
+
+
+@app.post("/analyze-esg-scope")
+async def analyze_esg_scope(files: list[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    extraction_results = []
+    combined_text_parts = []
+    file_connection_status = []
+
+    for file in files:
+        if not file.filename:
+            continue
+        extension = Path(file.filename).suffix.lower()
+        if extension not in SUPPORTED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only PDF and image files are supported. Invalid file: {file.filename}",
+            )
+
+        temp_path = None
+        try:
+            contents = await file.read()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
+                temp_file.write(contents)
+                temp_path = temp_file.name
+
+            extracted_text, warnings, page_count, method = extract_text_from_file(temp_path, extension)
+            extraction_results.append(
+                {
+                    "file_name": file.filename,
+                    "page_count": page_count,
+                    "method": method,
+                    "warnings": warnings,
+                    "character_count": len(extracted_text),
+                }
+            )
+            if extracted_text:
+                combined_text_parts.append(extracted_text)
+                file_connection_status.append(
+                    {
+                        "file_name": file.filename,
+                        "included_in_gpt_context": True,
+                        "extracted_characters": len(extracted_text),
+                        "reason": "Text extracted successfully and queued for GPT analysis.",
+                    }
+                )
+            else:
+                file_connection_status.append(
+                    {
+                        "file_name": file.filename,
+                        "included_in_gpt_context": False,
+                        "extracted_characters": 0,
+                        "reason": "No text extracted from this file, so nothing was sent for GPT context.",
+                    }
+                )
+        finally:
+            if temp_path:
+                Path(temp_path).unlink(missing_ok=True)
+
+    combined_text = "\n\n".join(combined_text_parts).strip()
+    ai_analysis = analyze_scope_data_with_gpt(combined_text)
+    return {
+        "success": True,
+        "files": extraction_results,
+        "combined_character_count": len(combined_text),
+        "analysis": ai_analysis,
+        "troubleshooting": {
+            "files": file_connection_status,
+            "gpt_connection": ai_analysis.get("troubleshooting", {}),
+        },
     }
 
 
