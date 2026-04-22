@@ -28,6 +28,9 @@ LOG_FILE = LOG_DIR / "app.log"
 TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
+ELECTRICITY_FACTOR_KG_PER_KWH = 0.233
+GAS_FACTOR_KG_PER_KWH = 0.184
+
 
 def setup_logger() -> logging.Logger:
     logger = logging.getLogger("pdf_extractor")
@@ -133,6 +136,111 @@ class ScopeSummaryRequest(BaseModel):
     results: list[dict] = Field(default_factory=list)
 
 
+def _safe_float(value) -> float | None:
+    try:
+        return float(str(value).replace(",", "").strip())
+    except Exception:
+        return None
+
+
+def _extract_usage_dict(response) -> dict:
+    usage_obj = getattr(response, "usage", None)
+    if not usage_obj:
+        return {}
+
+    usage = {}
+    for attr in ["input_tokens", "output_tokens", "total_tokens"]:
+        val = getattr(usage_obj, attr, None)
+        if val is not None:
+            usage[attr] = val
+    return usage
+
+
+def _estimate_scope_from_activity(scope_data: dict, scope_key: str) -> dict:
+    if not isinstance(scope_data, dict):
+        return scope_data
+
+    total_kg = 0.0
+    for item in scope_data.get("activity_items", []):
+        value = _safe_float(item.get("value"))
+        unit = (item.get("unit") or "").lower().strip()
+        if value is None:
+            continue
+
+        if scope_key == "scope_1" and unit == "kwh":
+            total_kg += value * GAS_FACTOR_KG_PER_KWH
+        elif scope_key == "scope_2" and unit == "kwh":
+            total_kg += value * ELECTRICITY_FACTOR_KG_PER_KWH
+
+    if total_kg > 0:
+        scope_data["estimated_emissions_tco2e"] = round(total_kg / 1000.0, 4)
+        scope_data["estimated_emissions_possible"] = True
+    elif "estimated_emissions_tco2e" not in scope_data:
+        scope_data["estimated_emissions_tco2e"] = None
+
+    return scope_data
+
+
+def _normalise_scope_analysis_schema(data: dict) -> dict:
+    if not isinstance(data, dict):
+        data = {}
+
+    def default_scope(explanation: str = ""):
+        return {
+            "reported_emissions_found": False,
+            "activity_data_found": False,
+            "estimated_emissions_possible": False,
+            "explanation": explanation,
+            "how_calculated": "",
+            "activity_items": [],
+            "reported_items": [],
+            "estimated_emissions_tco2e": None,
+        }
+
+    output = {
+        "analysis_method": data.get("analysis_method"),
+        "model": data.get("model"),
+        "usage": data.get("usage", {}),
+        "troubleshooting": data.get("troubleshooting", {}),
+        "reporting_years": data.get("reporting_years", []),
+        "important_points": data.get("important_points", []),
+        "calculation_explanation": data.get("calculation_explanation", []),
+        "scope_1": default_scope("No Scope 1 evidence found."),
+        "scope_2": default_scope("No Scope 2 evidence found."),
+        "scope_3": default_scope("No Scope 3 evidence found."),
+    }
+
+    for scope_key in ["scope_1", "scope_2", "scope_3"]:
+        incoming = data.get(scope_key, {})
+        if isinstance(incoming, dict):
+            output[scope_key].update(incoming)
+
+        if not isinstance(output[scope_key].get("activity_items"), list):
+            output[scope_key]["activity_items"] = []
+        if not isinstance(output[scope_key].get("reported_items"), list):
+            output[scope_key]["reported_items"] = []
+
+        output[scope_key]["activity_data_found"] = bool(output[scope_key]["activity_items"]) or bool(
+            output[scope_key].get("activity_data_found")
+        )
+        output[scope_key]["reported_emissions_found"] = bool(output[scope_key]["reported_items"]) or bool(
+            output[scope_key].get("reported_emissions_found")
+        )
+
+        output[scope_key] = _estimate_scope_from_activity(output[scope_key], scope_key)
+
+    if not output["important_points"]:
+        output["important_points"] = ["No additional important points were extracted."]
+
+    if not output["calculation_explanation"]:
+        output["calculation_explanation"] = [
+            "Reported emissions totals were not found in the text.",
+            "Activity data was identified for possible downstream emissions estimation.",
+        ]
+
+    return output
+
+
 def build_summary_pdf_bytes(
     title: str,
     combined_summary: str,
@@ -217,6 +325,8 @@ def build_summary_pdf_bytes(
 
 
 def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dict]) -> bytes:
+    analysis = _normalise_scope_analysis_schema(analysis)
+
     doc = fitz.open()
     page = doc.new_page()
     margin = 50
@@ -236,7 +346,7 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
         page.insert_text((margin, y), text, fontsize=fontsize, fontname="helv")
         y += spacing
 
-    def add_paragraph(text: str, fontsize: int = 11, spacing_after: float = 10.0):
+    def add_paragraph(text: str, fontsize: int = 10, spacing_after: float = 8.0):
         nonlocal page, y
         cleaned = (text or "").strip()
         if not cleaned:
@@ -251,60 +361,98 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
         approx_lines = max(1, len(cleaned) // 90 + 1)
         y += approx_lines * (fontsize + 5) + spacing_after
 
-    totals = analysis.get("totals_by_scope_tco2e", {})
-    scope_presence = analysis.get("scope_presence", {})
-    metrics = analysis.get("metrics", [])
-    points = analysis.get("important_points", [])
-    calc_explanations = analysis.get("calculation_explanation", [])
+    def render_scope(scope_name: str, scope_data: dict):
+        add_line(scope_name.replace("_", " ").title(), fontsize=13, spacing=18)
+
+        add_paragraph(
+            f"Reported emissions found: {'Yes' if scope_data.get('reported_emissions_found') else 'No'}",
+            fontsize=10,
+            spacing_after=3,
+        )
+        add_paragraph(
+            f"Activity data found: {'Yes' if scope_data.get('activity_data_found') else 'No'}",
+            fontsize=10,
+            spacing_after=3,
+        )
+        add_paragraph(
+            f"Estimated emissions possible: {'Yes' if scope_data.get('estimated_emissions_possible') else 'No'}",
+            fontsize=10,
+            spacing_after=3,
+        )
+
+        estimated = scope_data.get("estimated_emissions_tco2e")
+        if estimated is not None:
+            add_paragraph(f"Estimated emissions: {estimated} tCO2e", fontsize=10, spacing_after=5)
+
+        if scope_data.get("explanation"):
+            add_paragraph(f"Explanation: {scope_data.get('explanation')}", fontsize=10, spacing_after=4)
+
+        if scope_data.get("how_calculated"):
+            add_paragraph(f"How calculated: {scope_data.get('how_calculated')}", fontsize=10, spacing_after=6)
+
+        add_paragraph("Activity Items:", fontsize=10, spacing_after=3)
+        activity_items = scope_data.get("activity_items", [])
+        if activity_items:
+            for item in activity_items:
+                add_paragraph(
+                    f"• {item.get('type', '-')}: {item.get('value', '-')} {item.get('unit', '')} | "
+                    f"Year: {item.get('year', '-')} | Source: {item.get('source_excerpt', '')[:150]}",
+                    fontsize=9,
+                    spacing_after=3,
+                )
+        else:
+            add_paragraph("No activity items extracted.", fontsize=9, spacing_after=4)
+
+        add_paragraph("Reported Emissions Items:", fontsize=10, spacing_after=3)
+        reported_items = scope_data.get("reported_items", [])
+        if reported_items:
+            for item in reported_items:
+                add_paragraph(
+                    f"• {item.get('type', '-')}: {item.get('value', '-')} {item.get('unit', '')} | "
+                    f"Year: {item.get('year', '-')} | Source: {item.get('source_excerpt', '')[:150]}",
+                    fontsize=9,
+                    spacing_after=3,
+                )
+        else:
+            add_paragraph("No reported emissions items extracted.", fontsize=9, spacing_after=6)
 
     add_line(title or "Scope 1-3 Emissions Analysis Report", fontsize=16, spacing=24)
     add_paragraph(
         f"Analysis method: {analysis.get('analysis_method', '-')} | Model: {analysis.get('model', '-')}",
         fontsize=10,
-        spacing_after=8,
+        spacing_after=10,
     )
 
-    add_line("Scope Coverage", fontsize=13, spacing=18)
-    for scope_key in ["scope_1", "scope_2", "scope_3"]:
-        found = scope_presence.get(scope_key, {}).get("found", False)
-        total = totals.get(scope_key, 0)
-        add_paragraph(f"{scope_key.replace('_', ' ').title()}: {'Found' if found else 'Not Found'} | Total: {total} tCO2e")
+    years = analysis.get("reporting_years", [])
+    if years:
+        add_line("Reporting Years", fontsize=13, spacing=18)
+        add_paragraph(", ".join(years), fontsize=10, spacing_after=8)
 
-    add_line("Scope 1-3 Analysis Summary", fontsize=13, spacing=18)
+    points = analysis.get("important_points", [])
+    add_line("Important Points", fontsize=13, spacing=18)
     if points:
         for point in points:
             add_paragraph(f"• {point}", fontsize=10, spacing_after=4)
     else:
-        add_paragraph("No additional summary points were extracted.", fontsize=10)
+        add_paragraph("No additional important points were extracted.", fontsize=10, spacing_after=8)
 
+    render_scope("scope_1", analysis.get("scope_1", {}))
+    render_scope("scope_2", analysis.get("scope_2", {}))
+    render_scope("scope_3", analysis.get("scope_3", {}))
+
+    calc_explanations = analysis.get("calculation_explanation", [])
     add_line("Calculation Approach", fontsize=13, spacing=18)
     if calc_explanations:
         for explanation in calc_explanations:
             add_paragraph(f"• {explanation}", fontsize=10, spacing_after=4)
     else:
-        add_paragraph("No calculation explanation provided by the analysis output.", fontsize=10)
+        add_paragraph("No calculation explanation provided.", fontsize=10, spacing_after=8)
 
-    add_line("Section-wise Emission Evidence", fontsize=13, spacing=18)
-    grouped: dict[str, list[dict]] = {"scope_1": [], "scope_2": [], "scope_3": []}
-    for metric in metrics:
-        scope = metric.get("scope")
-        if scope in grouped:
-            grouped[scope].append(metric)
-    for scope_key in ["scope_1", "scope_2", "scope_3"]:
-        add_line(scope_key.replace("_", " ").title(), fontsize=11, spacing=14)
-        if not grouped[scope_key]:
-            add_paragraph("No metric rows extracted for this scope.", fontsize=10, spacing_after=6)
-            continue
-        for metric in grouped[scope_key][:20]:
-            category = metric.get("category", "emission item")
-            value = metric.get("value", "-")
-            unit = metric.get("unit", "")
-            year = metric.get("year", "-")
-            add_paragraph(f"• {category}: {value} {unit} (year: {year})", fontsize=9, spacing_after=2)
-            if metric.get("explanation"):
-                add_paragraph(f"  explanation: {metric.get('explanation')}", fontsize=8, spacing_after=2)
-            if metric.get("source_excerpt"):
-                add_paragraph(f"  source: {metric.get('source_excerpt')[:160]}", fontsize=8, spacing_after=4)
+    usage = analysis.get("usage", {})
+    if usage:
+        add_line("Model Usage", fontsize=13, spacing=18)
+        for key, value in usage.items():
+            add_paragraph(f"{key}: {value}", fontsize=9, spacing_after=3)
 
     add_line("Documents Analyzed", fontsize=13, spacing=18)
     for item in results:
@@ -539,106 +687,183 @@ def generate_summary(text: str, max_sentences: int = 5) -> str:
     return " ".join(ordered_selected)
 
 
-def _extract_usage_dict(response) -> dict:
-    usage_obj = getattr(response, "usage", None)
-    if not usage_obj:
-        return {}
+def _extract_kwh_items(cleaned: str, label: str, type_name: str) -> list[dict]:
+    items = []
+    pattern = re.compile(
+        rf"{label}[^.\n]{{0,160}}?(\d+(?:,\d{{3}})*(?:\.\d+)?)\s*kwh",
+        flags=re.IGNORECASE
+    )
+    for match in pattern.finditer(cleaned):
+        value = _safe_float(match.group(1))
+        if value is None:
+            continue
+        excerpt = match.group(0).strip()
+        year_match = re.search(r"\b(20\d{2})\b", excerpt)
+        year = year_match.group(1) if year_match else ""
+        items.append(
+            {
+                "type": type_name,
+                "value": value,
+                "unit": "kWh",
+                "year": year,
+                "source_excerpt": excerpt,
+            }
+        )
+    return items
 
-    usage = {}
-    for attr in [
-        "input_tokens",
-        "output_tokens",
-        "total_tokens",
-    ]:
-        val = getattr(usage_obj, attr, None)
-        if val is not None:
-            usage[attr] = val
-    return usage
 
-
-def _to_tco2e(value: float, unit: str) -> float:
-    normalized = (unit or "tco2e").lower().replace("₂", "2")
-    if normalized.startswith("kg"):
-        return value / 1000.0
-    return value
+def _extract_gas_m3_items(cleaned: str) -> list[dict]:
+    items = []
+    patterns = [
+        re.compile(r"consumption[^.\n]{0,80}?(\d+(?:,\d{3})*(?:\.\d+)?)\s*units?\s*\(m3", flags=re.IGNORECASE),
+        re.compile(r"gas[^.\n]{0,140}?(\d+(?:,\d{3})*(?:\.\d+)?)\s*m3", flags=re.IGNORECASE),
+    ]
+    for pattern in patterns:
+        for match in pattern.finditer(cleaned):
+            value = _safe_float(match.group(1))
+            if value is None:
+                continue
+            excerpt = match.group(0).strip()
+            year_match = re.search(r"\b(20\d{2})\b", excerpt)
+            year = year_match.group(1) if year_match else ""
+            items.append(
+                {
+                    "type": "natural_gas_m3",
+                    "value": value,
+                    "unit": "m3",
+                    "year": year,
+                    "source_excerpt": excerpt,
+                }
+            )
+    return items
 
 
 def analyze_scope_data(text: str) -> dict:
     cleaned = re.sub(r"\s+", " ", text or "").strip()
-    scope_presence = {
-        "scope_1": {"found": bool(re.search(r"\bscope\s*1\b", cleaned, flags=re.IGNORECASE))},
-        "scope_2": {"found": bool(re.search(r"\bscope\s*2\b", cleaned, flags=re.IGNORECASE))},
-        "scope_3": {"found": bool(re.search(r"\bscope\s*3\b", cleaned, flags=re.IGNORECASE))},
-    }
-
     years = sorted(set(re.findall(r"\b(20\d{2})\b", cleaned)))
-    target_statements = re.findall(
-        r"([^.]*\b(target|reduction|decrease|net[- ]?zero|goal)\b[^.]*)",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-    target_texts = [x[0].strip() for x in target_statements][:10]
 
-    metrics: list[dict] = []
-    metric_pattern = re.compile(
-        r"(scope\s*[123])([^.\n]{0,140}?)(\d[\d,]*(?:\.\d+)?)\s*(tco2e|tco₂e|co2e|mtco2e|kgco2e)?",
-        flags=re.IGNORECASE,
-    )
+    electricity_items = _extract_kwh_items(cleaned, "electricity|energy used", "electricity_kwh")
+    gas_kwh_items = []
+    gas_m3_items = _extract_gas_m3_items(cleaned)
 
-    for match in metric_pattern.finditer(cleaned):
-        scope_raw = match.group(1).lower().replace(" ", "_")
-        value_raw = match.group(3).replace(",", "")
-        unit = (match.group(4) or "tCO2e").replace("₂", "2")
-        try:
-            value = float(value_raw)
-        except ValueError:
+    gas_context_pattern = re.compile(r"gas[^.\n]{0,160}?(\d+(?:,\d{3})*(?:\.\d+)?)\s*kwh", flags=re.IGNORECASE)
+    for match in gas_context_pattern.finditer(cleaned):
+        value = _safe_float(match.group(1))
+        if value is None:
             continue
-        tco2e_value = _to_tco2e(value, unit)
-        metrics.append(
+        excerpt = match.group(0).strip()
+        year_match = re.search(r"\b(20\d{2})\b", excerpt)
+        gas_kwh_items.append(
             {
-                "scope": scope_raw,
+                "type": "natural_gas_kwh",
                 "value": value,
-                "unit": unit,
-                "value_tco2e": round(tco2e_value, 6),
-                "category": match.group(2).strip(" :,-") or "reported emissions",
-                "source_excerpt": match.group(0).strip(),
+                "unit": "kWh",
+                "year": year_match.group(1) if year_match else "",
+                "source_excerpt": excerpt,
             }
         )
 
-    totals_by_scope = {"scope_1": 0.0, "scope_2": 0.0, "scope_3": 0.0}
-    evidence_by_scope: dict[str, list[str]] = {"scope_1": [], "scope_2": [], "scope_3": []}
-    for metric in metrics:
-        scope = metric["scope"]
-        if scope in totals_by_scope:
-            totals_by_scope[scope] += metric["value_tco2e"]
-            evidence_by_scope[scope].append(metric["source_excerpt"])
+    if not gas_kwh_items:
+        generic_energy_used = re.finditer(r"energy used[^.\n]{0,80}?(\d+(?:,\d{3})*(?:\.\d+)?)\s*kwh", cleaned, flags=re.IGNORECASE)
+        for match in generic_energy_used:
+            excerpt = match.group(0).strip()
+            nearby = cleaned[max(0, match.start() - 120): match.end() + 40].lower()
+            value = _safe_float(match.group(1))
+            if value is None:
+                continue
+            if "gas" in nearby:
+                gas_kwh_items.append(
+                    {
+                        "type": "natural_gas_kwh",
+                        "value": value,
+                        "unit": "kWh",
+                        "year": years[0] if years else "",
+                        "source_excerpt": excerpt,
+                    }
+                )
+            elif "electricity" in nearby:
+                electricity_items.append(
+                    {
+                        "type": "electricity_kwh",
+                        "value": value,
+                        "unit": "kWh",
+                        "year": years[0] if years else "",
+                        "source_excerpt": excerpt,
+                    }
+                )
 
-    for key in totals_by_scope:
-        totals_by_scope[key] = round(totals_by_scope[key], 4)
+    co2e_pattern = re.compile(
+        r"(?P<label>[^.\n]{0,80}?)(?P<value>\d+(?:,\d{3})*(?:\.\d+)?)\s*(?P<unit>kgco2e|tco2e|co2e|mtco2e)",
+        flags=re.IGNORECASE,
+    )
 
-    explanations = []
-    for scope_key in ["scope_1", "scope_2", "scope_3"]:
-        evidence = evidence_by_scope.get(scope_key, [])
-        if evidence:
-            explanations.append(
-                f"{scope_key.replace('_', ' ').title()} total is {totals_by_scope[scope_key]} tCO2e, "
-                f"calculated by summing {len(evidence)} extracted emission values."
-            )
-        else:
-            explanations.append(
-                f"{scope_key.replace('_', ' ').title()} was not quantified from extracted text."
-            )
+    reported_scope_1 = []
+    reported_scope_2 = []
+    reported_scope_3 = []
 
-    return {
+    for match in co2e_pattern.finditer(cleaned):
+        value = _safe_float(match.group("value"))
+        if value is None:
+            continue
+        unit = match.group("unit")
+        excerpt = match.group(0).strip()
+        label_text = (match.group("label") or "").lower()
+
+        item = {
+            "type": "reported_emissions",
+            "value": value,
+            "unit": unit,
+            "year": years[0] if years else "",
+            "source_excerpt": excerpt,
+        }
+
+        if "scope 1" in label_text or "gas" in label_text or "fuel" in label_text:
+            reported_scope_1.append(item)
+        elif "scope 2" in label_text or "electricity" in label_text:
+            reported_scope_2.append(item)
+        elif "scope 3" in label_text or "travel" in label_text or "waste" in label_text or "supplier" in label_text:
+            reported_scope_3.append(item)
+
+    output = {
         "analysis_method": "heuristic_fallback",
         "model": None,
-        "scope_presence": scope_presence,
+        "usage": {},
         "reporting_years": years,
-        "target_statements": target_texts,
-        "important_points": explanations,
-        "metrics": metrics[:50],
-        "totals_by_scope_tco2e": totals_by_scope,
-        "calculation_explanation": explanations,
+        "important_points": [],
+        "scope_1": {
+            "reported_emissions_found": bool(reported_scope_1),
+            "activity_data_found": bool(gas_kwh_items or gas_m3_items),
+            "estimated_emissions_possible": bool(gas_kwh_items),
+            "explanation": "Gas consumption is direct fuel use and usually maps to Scope 1." if (gas_kwh_items or gas_m3_items) else "No Scope 1 evidence found.",
+            "how_calculated": "Convert gas kWh to emissions using an appropriate gas emission factor." if gas_kwh_items else "",
+            "activity_items": gas_kwh_items + gas_m3_items,
+            "reported_items": reported_scope_1,
+            "estimated_emissions_tco2e": None,
+        },
+        "scope_2": {
+            "reported_emissions_found": bool(reported_scope_2),
+            "activity_data_found": bool(electricity_items),
+            "estimated_emissions_possible": bool(electricity_items),
+            "explanation": "Purchased electricity consumption usually maps to Scope 2." if electricity_items else "No Scope 2 evidence found.",
+            "how_calculated": "Convert electricity kWh using a market based or location based electricity factor." if electricity_items else "",
+            "activity_items": electricity_items,
+            "reported_items": reported_scope_2,
+            "estimated_emissions_tco2e": None,
+        },
+        "scope_3": {
+            "reported_emissions_found": bool(reported_scope_3),
+            "activity_data_found": False,
+            "estimated_emissions_possible": False,
+            "explanation": "No value chain emissions evidence found in the text.",
+            "how_calculated": "",
+            "activity_items": [],
+            "reported_items": reported_scope_3,
+            "estimated_emissions_tco2e": None,
+        },
+        "calculation_explanation": [
+            "Reported emissions totals were not found in the text.",
+            "Activity data was identified for possible downstream emissions estimation.",
+        ],
         "troubleshooting": {
             "used_gpt": False,
             "input_has_text": bool(cleaned),
@@ -646,20 +871,35 @@ def analyze_scope_data(text: str) -> dict:
         },
     }
 
+    output = _normalise_scope_analysis_schema(output)
+
+    important_points = []
+    if output["scope_1"]["activity_data_found"]:
+        important_points.append("Gas activity data was identified and mapped to Scope 1.")
+    if output["scope_2"]["activity_data_found"]:
+        important_points.append("Electricity activity data was identified and mapped to Scope 2.")
+    if output["scope_3"]["reported_emissions_found"] or output["scope_3"]["activity_data_found"]:
+        important_points.append("Possible Scope 3 evidence was identified in the document.")
+    if not important_points:
+        important_points.append("No direct emissions values were found. Activity data may still be limited.")
+
+    output["important_points"] = important_points
+    return output
+
 
 def analyze_scope_data_with_gpt(text: str) -> dict:
     if not (text or "").strip():
-        return {
-            **analyze_scope_data(""),
-            "troubleshooting": {
-                "used_gpt": False,
-                "input_has_text": False,
-                "reason": "No extracted text available for ESG scope analysis.",
-            },
+        fallback = analyze_scope_data("")
+        fallback["troubleshooting"] = {
+            "used_gpt": False,
+            "input_has_text": False,
+            "reason": "No extracted text available for ESG scope analysis.",
         }
+        return fallback
 
     api_key = os.getenv("OPENAI_API_KEY")
     model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+
     if not api_key:
         fallback = analyze_scope_data(text)
         fallback["troubleshooting"] = {
@@ -671,23 +911,85 @@ def analyze_scope_data_with_gpt(text: str) -> dict:
 
     try:
         from openai import OpenAI
+
         client = OpenAI(api_key=api_key)
+
         prompt = """
 You are an ESG emissions analyst.
-Return STRICT JSON with:
+
+Analyse the extracted document text and return STRICT JSON only.
+
+Your task is to identify BOTH:
+1. reported emissions explicitly stated in the document
+2. activity data that can be used to estimate emissions
+
+Return JSON with exactly this structure:
+
 {
-  "scope_presence": {"scope_1":{"found":true},"scope_2":{"found":true},"scope_3":{"found":true}},
-  "reporting_years": ["2024"],
-  "important_points": ["..."],
-  "metrics": [{"scope":"scope_1","category":"fuel combustion","value":123.4,"unit":"tCO2e","year":"2024","explanation":"how extracted"}],
-  "totals_by_scope_tco2e": {"scope_1":123.4,"scope_2":0.0,"scope_3":0.0},
-  "calculation_explanation": ["how totals were calculated, mention assumptions and unit conversion if any"]
+  "reporting_years": [],
+  "important_points": [],
+  "scope_1": {
+    "reported_emissions_found": false,
+    "activity_data_found": false,
+    "estimated_emissions_possible": false,
+    "explanation": "",
+    "how_calculated": "",
+    "activity_items": [
+      {
+        "type": "",
+        "value": 0,
+        "unit": "",
+        "year": "",
+        "source_excerpt": ""
+      }
+    ],
+    "reported_items": [
+      {
+        "type": "",
+        "value": 0,
+        "unit": "",
+        "year": "",
+        "source_excerpt": ""
+      }
+    ],
+    "estimated_emissions_tco2e": null
+  },
+  "scope_2": {
+    "reported_emissions_found": false,
+    "activity_data_found": false,
+    "estimated_emissions_possible": false,
+    "explanation": "",
+    "how_calculated": "",
+    "activity_items": [],
+    "reported_items": [],
+    "estimated_emissions_tco2e": null
+  },
+  "scope_3": {
+    "reported_emissions_found": false,
+    "activity_data_found": false,
+    "estimated_emissions_possible": false,
+    "explanation": "",
+    "how_calculated": "",
+    "activity_items": [],
+    "reported_items": [],
+    "estimated_emissions_tco2e": null
+  },
+  "calculation_explanation": []
 }
+
 Rules:
-- Use only values present in text.
-- Convert kgCO2e to tCO2e (divide by 1000).
-- Keep explanations concise and business-friendly.
+- Return valid JSON only.
+- Do not invent reported emissions values.
+- If the document contains electricity usage in kWh, classify it as Scope 2 activity data.
+- If the document contains gas usage in kWh or m3, classify it as Scope 1 activity data.
+- Only put values into reported_items if CO2e values are explicitly written in the text.
+- Utility bills often contain activity data, not direct emissions totals.
+- If activity data is found, set activity_data_found to true even if reported emissions are absent.
+- Scope 3 should only be marked if there is real value chain evidence.
+- Use concise, business-friendly explanations.
+- If there is no evidence for a scope, keep activity_items and reported_items empty.
 """
+
         response = client.responses.create(
             model=model_name,
             input=[
@@ -696,6 +998,7 @@ Rules:
             ],
             text={"format": {"type": "json_object"}},
         )
+
         parsed = json.loads(response.output_text.strip())
         parsed["analysis_method"] = "gpt"
         parsed["model"] = model_name
@@ -705,7 +1008,16 @@ Rules:
             "input_has_text": True,
             "reason": "",
         }
+
+        parsed = _normalise_scope_analysis_schema(parsed)
+
+        if not parsed["important_points"]:
+            parsed["important_points"] = [
+                "Activity data was identified for possible downstream emissions estimation."
+            ]
+
         return parsed
+
     except Exception as exc:
         fallback = analyze_scope_data(text)
         fallback["troubleshooting"] = {
@@ -732,8 +1044,8 @@ def analyse_documents_with_gpt(file_payloads: list[dict], combined_text: str, re
             "usage": {},
             "troubleshooting": {
                 "used_gpt": False,
-                "reason": "No combined text"
-            }
+                "reason": "No combined text",
+            },
         }
 
     if not api_key:
@@ -758,12 +1070,13 @@ def analyse_documents_with_gpt(file_payloads: list[dict], combined_text: str, re
             "usage": {},
             "troubleshooting": {
                 "used_gpt": False,
-                "reason": "OPENAI_API_KEY not configured"
-            }
+                "reason": "OPENAI_API_KEY not configured",
+            },
         }
 
     try:
         from openai import OpenAI
+
         client = OpenAI(api_key=api_key)
 
         file_descriptions = []
@@ -771,7 +1084,7 @@ def analyse_documents_with_gpt(file_payloads: list[dict], combined_text: str, re
             file_descriptions.append(
                 {
                     "file_name": item["file_name"],
-                    "text": item.get("extracted_text", "")[:40000]
+                    "text": item.get("extracted_text", "")[:40000],
                 }
             )
 
@@ -836,7 +1149,7 @@ Rules:
             data["usage"] = usage
             data["troubleshooting"] = {
                 "used_gpt": True,
-                "reason": ""
+                "reason": "",
             }
             return data
 
@@ -864,8 +1177,8 @@ Rules:
             "usage": {},
             "troubleshooting": {
                 "used_gpt": False,
-                "reason": f"GPT analysis failed: {exc}"
-            }
+                "reason": f"GPT analysis failed: {exc}",
+            },
         }
 
 

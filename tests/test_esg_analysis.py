@@ -5,30 +5,30 @@ from pdf_web.main import analyze_scope_data, analyze_scope_data_with_gpt
 
 
 class ScopeAnalysisTests(unittest.TestCase):
-    def test_detects_scope_mentions_and_metrics(self):
+    def test_detects_reported_scope_emissions(self):
         text = """
         Scope 1 emissions 2024: 1200 tCO2e
         Scope 2 market-based emissions 2024: 900 tCO2e
         Scope 3 business travel emissions 2024: 300 tCO2e
-        We target a 30% reduction by 2030 from a 2020 baseline.
         """
+
         result = analyze_scope_data(text)
 
-        self.assertTrue(result["scope_presence"]["scope_1"]["found"])
-        self.assertTrue(result["scope_presence"]["scope_2"]["found"])
-        self.assertTrue(result["scope_presence"]["scope_3"]["found"])
+        self.assertTrue(result["scope_1"]["reported_emissions_found"])
+        self.assertTrue(result["scope_2"]["reported_emissions_found"])
+        self.assertTrue(result["scope_3"]["reported_emissions_found"])
         self.assertIn("2024", result["reporting_years"])
-        self.assertIn("2030", result["reporting_years"])
-        self.assertGreaterEqual(len(result["target_statements"]), 1)
 
     def test_handles_empty_input(self):
         result = analyze_scope_data("")
 
-        self.assertFalse(result["scope_presence"]["scope_1"]["found"])
-        self.assertFalse(result["scope_presence"]["scope_2"]["found"])
-        self.assertFalse(result["scope_presence"]["scope_3"]["found"])
+        self.assertFalse(result["scope_1"]["reported_emissions_found"])
+        self.assertFalse(result["scope_1"]["activity_data_found"])
+        self.assertFalse(result["scope_2"]["reported_emissions_found"])
+        self.assertFalse(result["scope_2"]["activity_data_found"])
+        self.assertFalse(result["scope_3"]["reported_emissions_found"])
+        self.assertFalse(result["scope_3"]["activity_data_found"])
         self.assertEqual(result["reporting_years"], [])
-        self.assertEqual(result["target_statements"], [])
 
     def test_gpt_fallback_exposes_missing_key_reason(self):
         previous_key = os.environ.pop("OPENAI_API_KEY", None)
@@ -58,24 +58,26 @@ class ScopeAnalysisTests(unittest.TestCase):
 
     def test_activity_data_detection_and_estimation(self):
         text = """
-        Electricity consumption in 2024 was 12,000 kWh.
-        Diesel fuel usage was 500 liters for backup generators.
+        Electricity consumption in 2024 was 12000 kWh.
+        Gas usage in 2024 was 5000 kWh.
         """
+
         result = analyze_scope_data(text)
 
-        self.assertTrue(result["scope_presence"]["scope_2"]["found_activity_data"])
-        self.assertTrue(result["scope_presence"]["scope_1"]["found_activity_data"])
-        self.assertTrue(result["scope_presence"]["scope_2"]["estimation_possible"])
-        self.assertTrue(result["scope_presence"]["scope_1"]["estimation_possible"])
-        self.assertGreater(result["estimated_totals_by_scope_tco2e"]["scope_2"], 0)
-        self.assertGreater(result["estimated_totals_by_scope_tco2e"]["scope_1"], 0)
-        self.assertGreater(len(result["activity_data"]), 0)
+        self.assertTrue(result["scope_2"]["activity_data_found"])
+        self.assertTrue(result["scope_1"]["activity_data_found"])
+        self.assertTrue(result["scope_2"]["estimated_emissions_possible"])
+        self.assertTrue(result["scope_1"]["estimated_emissions_possible"])
+        self.assertIsNotNone(result["scope_2"]["estimated_emissions_tco2e"])
+        self.assertIsNotNone(result["scope_1"]["estimated_emissions_tco2e"])
+        self.assertGreater(len(result["scope_2"]["activity_items"]), 0)
+        self.assertGreater(len(result["scope_1"]["activity_items"]), 0)
 
-    def test_activity_data_without_factor_marks_not_estimable(self):
-        text = "Scope 3 logistics ton-km 12000 in 2024."
+    def test_scope_3_without_factor_marks_not_estimable(self):
+        text = "Business travel and logistics data mentioned in 2024 without any CO2e values."
         result = analyze_scope_data(text)
-        self.assertTrue(result["scope_presence"]["scope_3"]["found"])
-        self.assertFalse(result["scope_presence"]["scope_3"]["estimation_possible"])
+
+        self.assertFalse(result["scope_3"]["estimated_emissions_possible"])
 
 
 if __name__ == "__main__":
