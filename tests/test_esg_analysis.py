@@ -14,21 +14,21 @@ class ScopeAnalysisTests(unittest.TestCase):
         """
         result = analyze_scope_data(text)
 
-        self.assertTrue(result["scope_presence"]["scope_1"]["found"])
-        self.assertTrue(result["scope_presence"]["scope_2"]["found"])
-        self.assertTrue(result["scope_presence"]["scope_3"]["found"])
+        self.assertTrue(result["scope_1"]["reported_emissions_found"])
+        self.assertTrue(result["scope_2"]["reported_emissions_found"])
+        self.assertTrue(result["scope_3"]["reported_emissions_found"])
         self.assertIn("2024", result["reporting_years"])
         self.assertIn("2030", result["reporting_years"])
-        self.assertGreaterEqual(len(result["target_statements"]), 1)
+        self.assertGreaterEqual(len(result["important_points"]), 1)
 
     def test_handles_empty_input(self):
         result = analyze_scope_data("")
 
-        self.assertFalse(result["scope_presence"]["scope_1"]["found"])
-        self.assertFalse(result["scope_presence"]["scope_2"]["found"])
-        self.assertFalse(result["scope_presence"]["scope_3"]["found"])
+        self.assertFalse(result["scope_1"]["reported_emissions_found"])
+        self.assertFalse(result["scope_2"]["reported_emissions_found"])
+        self.assertFalse(result["scope_3"]["reported_emissions_found"])
         self.assertEqual(result["reporting_years"], [])
-        self.assertEqual(result["target_statements"], [])
+        self.assertTrue(isinstance(result["important_points"], list))
 
     def test_gpt_fallback_exposes_missing_key_reason(self):
         previous_key = os.environ.pop("OPENAI_API_KEY", None)

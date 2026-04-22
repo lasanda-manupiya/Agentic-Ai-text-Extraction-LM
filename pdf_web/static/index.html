@@ -555,9 +555,9 @@
         scopeAnalysisEl.innerHTML = `
           <div><strong>Method:</strong> ${analysis.analysis_method || "-"}</div>
           <div><strong>Model:</strong> ${analysis.model || "-"}</div>
-          <div><strong>Scope 1:</strong> ${analysis.scope_presence?.scope_1?.found ? "Found" : "Not Found"}</div>
-          <div><strong>Scope 2:</strong> ${analysis.scope_presence?.scope_2?.found ? "Found" : "Not Found"}</div>
-          <div><strong>Scope 3:</strong> ${analysis.scope_presence?.scope_3?.found ? "Found" : "Not Found"}</div>
+          <div><strong>Scope 1:</strong> Reported=${s1.reported_emissions_found ? "Yes" : "No"} · Activity=${s1.activity_data_found ? "Yes" : "No"} · Estimation=${s1.estimated_emissions_possible ? "Yes" : "No"}</div>
+          <div><strong>Scope 2:</strong> Reported=${s2.reported_emissions_found ? "Yes" : "No"} · Activity=${s2.activity_data_found ? "Yes" : "No"} · Estimation=${s2.estimated_emissions_possible ? "Yes" : "No"}</div>
+          <div><strong>Scope 3:</strong> Reported=${s3.reported_emissions_found ? "Yes" : "No"} · Activity=${s3.activity_data_found ? "Yes" : "No"} · Estimation=${s3.estimated_emissions_possible ? "Yes" : "No"}</div>
           <div><strong>Years:</strong> ${(analysis.reporting_years || []).join(", ") || "None"}</div>
           <div style="margin-top:8px;"><strong>Important points:</strong></div>
           <ul>${points.map(point => `<li>${point}</li>`).join("") || "<li>No points extracted.</li>"}</ul>
