@@ -30,6 +30,14 @@ SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"
 
 ELECTRICITY_FACTOR_KG_PER_KWH = 0.233
 GAS_FACTOR_KG_PER_KWH = 0.184
+GAS_KWH_PER_M3 = 11.2
+MONTH_PATTERN = re.compile(
+    r"\b("
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
+    r")\b",
+    flags=re.IGNORECASE,
+)
 
 
 def setup_logger() -> logging.Logger:
@@ -169,6 +177,8 @@ def _estimate_scope_from_activity(scope_data: dict, scope_key: str) -> dict:
 
         if scope_key == "scope_1" and unit == "kwh":
             total_kg += value * GAS_FACTOR_KG_PER_KWH
+        elif scope_key == "scope_1" and unit == "m3":
+            total_kg += value * GAS_KWH_PER_M3 * GAS_FACTOR_KG_PER_KWH
         elif scope_key == "scope_2" and unit == "kwh":
             total_kg += value * ELECTRICITY_FACTOR_KG_PER_KWH
 
@@ -226,6 +236,8 @@ def _normalise_scope_analysis_schema(data: dict) -> dict:
         output[scope_key]["reported_emissions_found"] = bool(output[scope_key]["reported_items"]) or bool(
             output[scope_key].get("reported_emissions_found")
         )
+        if output[scope_key]["activity_data_found"]:
+            output[scope_key]["estimated_emissions_possible"] = True
 
         output[scope_key] = _estimate_scope_from_activity(output[scope_key], scope_key)
 
@@ -395,8 +407,14 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
         if activity_items:
             for item in activity_items:
                 add_paragraph(
-                    f"• {item.get('type', '-')}: {item.get('value', '-')} {item.get('unit', '')} | "
-                    f"Year: {item.get('year', '-')} | Source: {item.get('source_excerpt', '')[:150]}",
+                    f"• {item.get('type', '-')}: {item.get('value', '-')} {item.get('unit', '')}"
+                    + (
+                        f" (~{item.get('value_kwh_estimate')} kWh)"
+                        if item.get("value_kwh_estimate") is not None
+                        else ""
+                    )
+                    + f" | Month: {item.get('month', '-') or '-'} | Year: {item.get('year', '-')} | "
+                    f"Source: {item.get('source_excerpt', '')[:150]}",
                     fontsize=9,
                     spacing_after=3,
                 )
@@ -700,12 +718,15 @@ def _extract_kwh_items(cleaned: str, label: str, type_name: str) -> list[dict]:
         excerpt = match.group(0).strip()
         year_match = re.search(r"\b(20\d{2})\b", excerpt)
         year = year_match.group(1) if year_match else ""
+        month_match = MONTH_PATTERN.search(excerpt)
+        month = month_match.group(1).title() if month_match else ""
         items.append(
             {
                 "type": type_name,
                 "value": value,
                 "unit": "kWh",
                 "year": year,
+                "month": month,
                 "source_excerpt": excerpt,
             }
         )
@@ -724,14 +745,20 @@ def _extract_gas_m3_items(cleaned: str) -> list[dict]:
             if value is None:
                 continue
             excerpt = match.group(0).strip()
-            year_match = re.search(r"\b(20\d{2})\b", excerpt)
+            nearby_context = cleaned[max(0, match.start() - 40): min(len(cleaned), match.end() + 40)]
+            year_match = re.search(r"\b(20\d{2})\b", excerpt) or re.search(r"\b(20\d{2})\b", nearby_context)
             year = year_match.group(1) if year_match else ""
+            month_match = MONTH_PATTERN.search(nearby_context) or MONTH_PATTERN.search(excerpt)
+            month = month_match.group(1).title() if month_match else ""
+            value_kwh_estimate = round(value * GAS_KWH_PER_M3, 4)
             items.append(
                 {
-                    "type": "natural_gas_m3",
+                    "type": "Gas Consumption",
                     "value": value,
                     "unit": "m3",
                     "year": year,
+                    "month": month,
+                    "value_kwh_estimate": value_kwh_estimate,
                     "source_excerpt": excerpt,
                 }
             )
@@ -742,7 +769,7 @@ def analyze_scope_data(text: str) -> dict:
     cleaned = re.sub(r"\s+", " ", text or "").strip()
     years = sorted(set(re.findall(r"\b(20\d{2})\b", cleaned)))
 
-    electricity_items = _extract_kwh_items(cleaned, "electricity|energy used", "electricity_kwh")
+    electricity_items = _extract_kwh_items(cleaned, "(?:electricity|energy used)", "electricity_kwh")
     gas_kwh_items = []
     gas_m3_items = _extract_gas_m3_items(cleaned)
 
@@ -759,6 +786,7 @@ def analyze_scope_data(text: str) -> dict:
                 "value": value,
                 "unit": "kWh",
                 "year": year_match.group(1) if year_match else "",
+                "month": "",
                 "source_excerpt": excerpt,
             }
         )
@@ -778,6 +806,7 @@ def analyze_scope_data(text: str) -> dict:
                         "value": value,
                         "unit": "kWh",
                         "year": years[0] if years else "",
+                        "month": "",
                         "source_excerpt": excerpt,
                     }
                 )
@@ -788,6 +817,7 @@ def analyze_scope_data(text: str) -> dict:
                         "value": value,
                         "unit": "kWh",
                         "year": years[0] if years else "",
+                        "month": "",
                         "source_excerpt": excerpt,
                     }
                 )
@@ -833,9 +863,13 @@ def analyze_scope_data(text: str) -> dict:
         "scope_1": {
             "reported_emissions_found": bool(reported_scope_1),
             "activity_data_found": bool(gas_kwh_items or gas_m3_items),
-            "estimated_emissions_possible": bool(gas_kwh_items),
+            "estimated_emissions_possible": bool(gas_kwh_items or gas_m3_items),
             "explanation": "Gas consumption is direct fuel use and usually maps to Scope 1." if (gas_kwh_items or gas_m3_items) else "No Scope 1 evidence found.",
-            "how_calculated": "Convert gas kWh to emissions using an appropriate gas emission factor." if gas_kwh_items else "",
+            "how_calculated": (
+                "Convert gas activity data (kWh or m3) to emissions using an appropriate gas emission factor."
+                if (gas_kwh_items or gas_m3_items)
+                else ""
+            ),
             "activity_items": gas_kwh_items + gas_m3_items,
             "reported_items": reported_scope_1,
             "estimated_emissions_tco2e": None,
