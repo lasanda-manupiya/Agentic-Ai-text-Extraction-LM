@@ -12,5 +12,16 @@ Upload multiple PDF and image files and extract text using:
 
 ```bash
 pip install -r requirements.txt
-export OPENAI_API_KEY=your_key_here
+cp .env.example .env
+# then edit .env
 python -m pdf_web.main
+```
+
+## Environment variables
+
+Use a local `.env` file (this is ignored by git):
+
+```env
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-4.1-mini
+```
