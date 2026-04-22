@@ -252,11 +252,8 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
         y += approx_lines * (fontsize + 5) + spacing_after
 
     totals = analysis.get("totals_by_scope_tco2e", {})
-    reported_totals = analysis.get("reported_totals_by_scope_tco2e", {})
-    estimated_totals = analysis.get("estimated_totals_by_scope_tco2e", {})
     scope_presence = analysis.get("scope_presence", {})
     metrics = analysis.get("metrics", [])
-    activity_data = analysis.get("activity_data", [])
     points = analysis.get("important_points", [])
     calc_explanations = analysis.get("calculation_explanation", [])
 
@@ -271,12 +268,7 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
     for scope_key in ["scope_1", "scope_2", "scope_3"]:
         found = scope_presence.get(scope_key, {}).get("found", False)
         total = totals.get(scope_key, 0)
-        reported = reported_totals.get(scope_key, 0)
-        estimated = estimated_totals.get(scope_key, 0)
-        add_paragraph(
-            f"{scope_key.replace('_', ' ').title()}: {'Found' if found else 'Not Found'} | "
-            f"Reported: {reported} tCO2e | Estimated: {estimated} tCO2e | Total: {total} tCO2e"
-        )
+        add_paragraph(f"{scope_key.replace('_', ' ').title()}: {'Found' if found else 'Not Found'} | Total: {total} tCO2e")
 
     add_line("Scope 1-3 Analysis Summary", fontsize=13, spacing=18)
     if points:
@@ -292,44 +284,27 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
     else:
         add_paragraph("No calculation explanation provided by the analysis output.", fontsize=10)
 
-    add_line("Reported Emissions Evidence", fontsize=13, spacing=18)
-    reported_metrics = [m for m in metrics if m.get("metric_type") == "reported_emissions"]
-    if not reported_metrics:
-        add_paragraph("No directly reported emissions values were extracted.", fontsize=10)
-    for metric in reported_metrics[:30]:
-        scope = metric.get("scope", "unknown")
-        add_paragraph(
-            f"• {scope}: {metric.get('category', '-')}: {metric.get('value', '-')} {metric.get('unit', '')}",
-            fontsize=9,
-            spacing_after=2,
-        )
-        if metric.get("source_excerpt"):
-            add_paragraph(f"  source: {metric.get('source_excerpt')[:160]}", fontsize=8, spacing_after=4)
-
-    add_line("Activity Data (for Estimation)", fontsize=13, spacing=18)
-    if not activity_data:
-        add_paragraph("No activity data (kWh, gas, fuel, etc.) was extracted.", fontsize=10)
-    for item in activity_data[:30]:
-        add_paragraph(
-            f"• {item.get('scope', 'unknown')} | {item.get('activity_label', '-')}: "
-            f"{item.get('activity_value', '-')} {item.get('activity_unit', '')}",
-            fontsize=9,
-            spacing_after=2,
-        )
-        add_paragraph(
-            f"  estimation_possible={item.get('estimation_possible', False)} | "
-            f"estimated_tco2e={item.get('estimated_tco2e', '-')}",
-            fontsize=8,
-            spacing_after=2,
-        )
-        add_paragraph(f"  note: {item.get('estimation_note', '-')}", fontsize=8, spacing_after=4)
-
-    add_line("Estimated Emissions by Scope", fontsize=13, spacing=18)
+    add_line("Section-wise Emission Evidence", fontsize=13, spacing=18)
+    grouped: dict[str, list[dict]] = {"scope_1": [], "scope_2": [], "scope_3": []}
+    for metric in metrics:
+        scope = metric.get("scope")
+        if scope in grouped:
+            grouped[scope].append(metric)
     for scope_key in ["scope_1", "scope_2", "scope_3"]:
-        add_paragraph(
-            f"{scope_key.replace('_', ' ').title()}: {estimated_totals.get(scope_key, 0)} tCO2e estimated "
-            f"from activity data."
-        )
+        add_line(scope_key.replace("_", " ").title(), fontsize=11, spacing=14)
+        if not grouped[scope_key]:
+            add_paragraph("No metric rows extracted for this scope.", fontsize=10, spacing_after=6)
+            continue
+        for metric in grouped[scope_key][:20]:
+            category = metric.get("category", "emission item")
+            value = metric.get("value", "-")
+            unit = metric.get("unit", "")
+            year = metric.get("year", "-")
+            add_paragraph(f"• {category}: {value} {unit} (year: {year})", fontsize=9, spacing_after=2)
+            if metric.get("explanation"):
+                add_paragraph(f"  explanation: {metric.get('explanation')}", fontsize=8, spacing_after=2)
+            if metric.get("source_excerpt"):
+                add_paragraph(f"  source: {metric.get('source_excerpt')[:160]}", fontsize=8, spacing_after=4)
 
     add_line("Documents Analyzed", fontsize=13, spacing=18)
     for item in results:
@@ -588,33 +563,6 @@ def _to_tco2e(value: float, unit: str) -> float:
     return value
 
 
-def _infer_scope_from_activity_label(label: str) -> str:
-    lowered = (label or "").lower()
-    if any(word in lowered for word in ["electricity", "grid", "purchased power", "kwh"]):
-        return "scope_2"
-    if any(word in lowered for word in ["commute", "flight", "travel", "waste", "logistics", "freight"]):
-        return "scope_3"
-    return "scope_1"
-
-
-def _emission_factor_for_activity(label: str, unit: str) -> tuple[float | None, str]:
-    lowered = (label or "").lower()
-    unit_norm = (unit or "").lower().replace(" ", "")
-    if "electricity" in lowered and unit_norm in {"kwh"}:
-        return 0.0004, "electricity factor 0.0004 tCO2e/kWh"
-    if ("natural gas" in lowered or "gas usage" in lowered or "gas consumption" in lowered) and unit_norm in {"kwh", "m3", "m³"}:
-        if unit_norm in {"m3", "m³"}:
-            return 0.0019, "natural gas factor 0.0019 tCO2e/m3"
-        return 0.000202, "natural gas factor 0.000202 tCO2e/kWh"
-    if any(x in lowered for x in ["diesel", "generator fuel"]) and unit_norm in {"l", "litre", "litres", "liter", "liters"}:
-        return 0.00268, "diesel factor 0.00268 tCO2e/litre"
-    if any(x in lowered for x in ["petrol", "gasoline"]) and unit_norm in {"l", "litre", "litres", "liter", "liters"}:
-        return 0.00231, "petrol factor 0.00231 tCO2e/litre"
-    if "fuel" in lowered and unit_norm in {"l", "litre", "litres", "liter", "liters"}:
-        return 0.0025, "generic fuel factor 0.0025 tCO2e/litre (assumed)"
-    return None, ""
-
-
 def analyze_scope_data(text: str) -> dict:
     cleaned = re.sub(r"\s+", " ", text or "").strip()
     scope_presence = {
@@ -632,7 +580,6 @@ def analyze_scope_data(text: str) -> dict:
     target_texts = [x[0].strip() for x in target_statements][:10]
 
     metrics: list[dict] = []
-    activity_data: list[dict] = []
     metric_pattern = re.compile(
         r"(scope\s*[123])([^.\n]{0,140}?)(\d[\d,]*(?:\.\d+)?)\s*(tco2e|tco₂e|co2e|mtco2e|kgco2e)?",
         flags=re.IGNORECASE,
@@ -655,111 +602,27 @@ def analyze_scope_data(text: str) -> dict:
                 "value_tco2e": round(tco2e_value, 6),
                 "category": match.group(2).strip(" :,-") or "reported emissions",
                 "source_excerpt": match.group(0).strip(),
-                "metric_type": "reported_emissions",
-                "estimation_possible": False,
             }
         )
 
-    activity_pattern = re.compile(
-        r"((scope\s*[123])?[^.\n]{0,80}?"
-        r"(electricity|natural gas|gas usage|gas consumption|diesel|petrol|gasoline|fuel usage|fuel consumption|fuel|business travel|flight|waste|freight|logistics)"
-        r"[^.\n]{0,40}?)"
-        r"(\d[\d,]*(?:\.\d+)?)\s*(kwh|mwh|m3|m³|l|litre|litres|liter|liters)\b",
-        flags=re.IGNORECASE,
-    )
-    for match in activity_pattern.finditer(cleaned):
-        descriptor = (match.group(1) or "").strip(" :,-")
-        scope_raw = (match.group(2) or "").lower().replace(" ", "_")
-        if scope_raw not in {"scope_1", "scope_2", "scope_3"}:
-            scope_raw = _infer_scope_from_activity_label(descriptor)
-        value_raw = match.group(4).replace(",", "")
-        unit = (match.group(5) or "").strip()
-        try:
-            value = float(value_raw)
-        except ValueError:
-            continue
-
-        factor, factor_note = _emission_factor_for_activity(descriptor, unit)
-        estimated_tco2e = None
-        estimation_possible = factor is not None
-        if estimation_possible:
-            estimated_tco2e = round(value * factor, 6)
-
-        activity_item = {
-            "scope": scope_raw,
-            "activity_label": descriptor,
-            "activity_value": value,
-            "activity_unit": unit,
-            "emission_factor_used": factor,
-            "estimated_tco2e": estimated_tco2e,
-            "estimation_possible": estimation_possible,
-            "estimation_note": factor_note or "No default factor available for this activity/unit pair.",
-            "source_excerpt": match.group(0).strip(),
-        }
-        activity_data.append(activity_item)
-        metrics.append(
-            {
-                "scope": scope_raw,
-                "value": value,
-                "unit": unit,
-                "value_tco2e": estimated_tco2e if estimated_tco2e is not None else 0,
-                "category": descriptor or "activity data",
-                "source_excerpt": match.group(0).strip(),
-                "metric_type": "estimated_from_activity",
-                "estimation_possible": estimation_possible,
-                "estimation_note": activity_item["estimation_note"],
-            }
-        )
-
-    reported_totals = {"scope_1": 0.0, "scope_2": 0.0, "scope_3": 0.0}
-    estimated_totals = {"scope_1": 0.0, "scope_2": 0.0, "scope_3": 0.0}
     totals_by_scope = {"scope_1": 0.0, "scope_2": 0.0, "scope_3": 0.0}
     evidence_by_scope: dict[str, list[str]] = {"scope_1": [], "scope_2": [], "scope_3": []}
     for metric in metrics:
         scope = metric["scope"]
-        if scope in reported_totals and metric.get("metric_type") == "reported_emissions":
-            reported_totals[scope] += metric.get("value_tco2e", 0)
-            totals_by_scope[scope] += metric.get("value_tco2e", 0)
-            evidence_by_scope[scope].append(metric["source_excerpt"])
-        elif scope in estimated_totals and metric.get("metric_type") == "estimated_from_activity":
-            if metric.get("estimation_possible"):
-                estimated_totals[scope] += metric.get("value_tco2e", 0)
-                totals_by_scope[scope] += metric.get("value_tco2e", 0)
+        if scope in totals_by_scope:
+            totals_by_scope[scope] += metric["value_tco2e"]
             evidence_by_scope[scope].append(metric["source_excerpt"])
 
     for key in totals_by_scope:
-        reported_totals[key] = round(reported_totals[key], 4)
-        estimated_totals[key] = round(estimated_totals[key], 4)
         totals_by_scope[key] = round(totals_by_scope[key], 4)
-        has_activity = any(item.get("scope") == key for item in activity_data)
-        can_estimate = any(
-            item.get("scope") == key and item.get("estimation_possible")
-            for item in activity_data
-        )
-        scope_presence[key]["found_activity_data"] = has_activity
-        scope_presence[key]["estimation_possible"] = can_estimate
-        scope_presence[key]["found_reported_emissions"] = bool(reported_totals[key] > 0)
-        scope_presence[key]["found"] = bool(scope_presence[key]["found"] or has_activity or reported_totals[key] > 0)
 
     explanations = []
     for scope_key in ["scope_1", "scope_2", "scope_3"]:
         evidence = evidence_by_scope.get(scope_key, [])
-        if reported_totals[scope_key] > 0 and estimated_totals[scope_key] > 0:
+        if evidence:
             explanations.append(
-                f"{scope_key.replace('_', ' ').title()} total is {totals_by_scope[scope_key]} tCO2e "
-                f"({reported_totals[scope_key]} reported + {estimated_totals[scope_key]} estimated from activity data)."
-            )
-        elif reported_totals[scope_key] > 0:
-            explanations.append(
-                f"{scope_key.replace('_', ' ').title()} total is {reported_totals[scope_key]} tCO2e from reported emissions values."
-            )
-        elif estimated_totals[scope_key] > 0:
-            explanations.append(
-                f"{scope_key.replace('_', ' ').title()} has no direct emissions values, estimated {estimated_totals[scope_key]} tCO2e from activity data."
-            )
-        elif evidence:
-            explanations.append(
-                f"{scope_key.replace('_', ' ').title()} activity data was found but no compatible default factor was available."
+                f"{scope_key.replace('_', ' ').title()} total is {totals_by_scope[scope_key]} tCO2e, "
+                f"calculated by summing {len(evidence)} extracted emission values."
             )
         else:
             explanations.append(
@@ -773,10 +636,7 @@ def analyze_scope_data(text: str) -> dict:
         "reporting_years": years,
         "target_statements": target_texts,
         "important_points": explanations,
-        "metrics": metrics[:80],
-        "activity_data": activity_data[:80],
-        "reported_totals_by_scope_tco2e": reported_totals,
-        "estimated_totals_by_scope_tco2e": estimated_totals,
+        "metrics": metrics[:50],
         "totals_by_scope_tco2e": totals_by_scope,
         "calculation_explanation": explanations,
         "troubleshooting": {
@@ -819,17 +679,13 @@ Return STRICT JSON with:
   "scope_presence": {"scope_1":{"found":true},"scope_2":{"found":true},"scope_3":{"found":true}},
   "reporting_years": ["2024"],
   "important_points": ["..."],
-  "metrics": [{"scope":"scope_1","category":"fuel combustion","value":123.4,"unit":"tCO2e","year":"2024","metric_type":"reported_emissions","explanation":"how extracted"}],
-  "activity_data": [{"scope":"scope_2","activity_label":"electricity consumption","activity_value":10000,"activity_unit":"kWh","estimation_possible":true,"emission_factor_used":0.0004,"estimated_tco2e":4.0,"estimation_note":"..."}],
-  "reported_totals_by_scope_tco2e": {"scope_1":100.0,"scope_2":0.0,"scope_3":0.0},
-  "estimated_totals_by_scope_tco2e": {"scope_1":0.0,"scope_2":4.0,"scope_3":0.0},
+  "metrics": [{"scope":"scope_1","category":"fuel combustion","value":123.4,"unit":"tCO2e","year":"2024","explanation":"how extracted"}],
   "totals_by_scope_tco2e": {"scope_1":123.4,"scope_2":0.0,"scope_3":0.0},
   "calculation_explanation": ["how totals were calculated, mention assumptions and unit conversion if any"]
 }
 Rules:
 - Use only values present in text.
 - Convert kgCO2e to tCO2e (divide by 1000).
-- Detect activity data (kWh, fuel, gas) and estimate where possible using simple factors.
 - Keep explanations concise and business-friendly.
 """
         response = client.responses.create(
