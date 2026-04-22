@@ -226,6 +226,8 @@ def _normalise_scope_analysis_schema(data: dict) -> dict:
         output[scope_key]["reported_emissions_found"] = bool(output[scope_key]["reported_items"]) or bool(
             output[scope_key].get("reported_emissions_found")
         )
+        if output[scope_key]["activity_data_found"]:
+            output[scope_key]["estimated_emissions_possible"] = True
 
         output[scope_key] = _estimate_scope_from_activity(output[scope_key], scope_key)
 
@@ -742,7 +744,7 @@ def analyze_scope_data(text: str) -> dict:
     cleaned = re.sub(r"\s+", " ", text or "").strip()
     years = sorted(set(re.findall(r"\b(20\d{2})\b", cleaned)))
 
-    electricity_items = _extract_kwh_items(cleaned, "electricity|energy used", "electricity_kwh")
+    electricity_items = _extract_kwh_items(cleaned, "(?:electricity|energy used)", "electricity_kwh")
     gas_kwh_items = []
     gas_m3_items = _extract_gas_m3_items(cleaned)
 
@@ -833,9 +835,13 @@ def analyze_scope_data(text: str) -> dict:
         "scope_1": {
             "reported_emissions_found": bool(reported_scope_1),
             "activity_data_found": bool(gas_kwh_items or gas_m3_items),
-            "estimated_emissions_possible": bool(gas_kwh_items),
+            "estimated_emissions_possible": bool(gas_kwh_items or gas_m3_items),
             "explanation": "Gas consumption is direct fuel use and usually maps to Scope 1." if (gas_kwh_items or gas_m3_items) else "No Scope 1 evidence found.",
-            "how_calculated": "Convert gas kWh to emissions using an appropriate gas emission factor." if gas_kwh_items else "",
+            "how_calculated": (
+                "Convert gas activity data (kWh or m3) to emissions using an appropriate gas emission factor."
+                if (gas_kwh_items or gas_m3_items)
+                else ""
+            ),
             "activity_items": gas_kwh_items + gas_m3_items,
             "reported_items": reported_scope_1,
             "estimated_emissions_tco2e": None,

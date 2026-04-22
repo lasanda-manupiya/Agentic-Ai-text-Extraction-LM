@@ -549,27 +549,78 @@
         }
         const analysis = data.analysis || {};
         const points = analysis.important_points || [];
-        const metrics = analysis.metrics || [];
-        const totals = analysis.totals_by_scope_tco2e || {};
         const calculations = analysis.calculation_explanation || [];
+        const toTco2e = (item) => {
+          const value = Number(item?.value);
+          if (Number.isNaN(value)) return null;
+          const unit = String(item?.unit || "").toLowerCase().trim();
+          if (unit === "tco2e" || unit === "mtco2e") return value;
+          if (unit === "kgco2e") return value / 1000;
+          if (unit === "co2e") return value;
+          return null;
+        };
+        const buildScopeStatus = (scopeData) => {
+          if (scopeData?.activity_data_found) {
+            return "Found (Activity Data)";
+          }
+          if (scopeData?.reported_emissions_found) {
+            return "Found (Reported)";
+          }
+          return "Not Found";
+        };
+        const scopeSummaryNote = (scopeData) => {
+          if (scopeData?.activity_data_found && !scopeData?.reported_emissions_found) {
+            return "Emissions can be estimated from activity data.";
+          }
+          return "";
+        };
+        const flattenKeyValues = (scopeName, scopeData) => {
+          const activityItems = scopeData?.activity_items || [];
+          const reportedItems = scopeData?.reported_items || [];
+          return [
+            ...reportedItems.map(item => ({ scope: scopeName, channel: "reported", ...item })),
+            ...activityItems.map(item => ({ scope: scopeName, channel: "activity", ...item }))
+          ];
+        };
+        const keyValues = [
+          ...flattenKeyValues("scope_1", analysis.scope_1),
+          ...flattenKeyValues("scope_2", analysis.scope_2),
+          ...flattenKeyValues("scope_3", analysis.scope_3)
+        ];
+        const scopeTotal = (scopeData) => {
+          const reportedTotal = (scopeData?.reported_items || [])
+            .map(toTco2e)
+            .filter(v => v !== null)
+            .reduce((acc, curr) => acc + curr, 0);
+          if (reportedTotal > 0) return reportedTotal.toFixed(4);
+          const estimated = scopeData?.estimated_emissions_tco2e;
+          if (typeof estimated === "number") return estimated.toFixed(4);
+          return "—";
+        };
+        const scope1 = analysis.scope_1 || {};
+        const scope2 = analysis.scope_2 || {};
+        const scope3 = analysis.scope_3 || {};
         scopeAnalysisEl.innerHTML = `
           <div><strong>Method:</strong> ${analysis.analysis_method || "-"}</div>
           <div><strong>Model:</strong> ${analysis.model || "-"}</div>
-          <div><strong>Scope 1:</strong> ${analysis.scope_presence?.scope_1?.found ? "Found" : "Not Found"}</div>
-          <div><strong>Scope 2:</strong> ${analysis.scope_presence?.scope_2?.found ? "Found" : "Not Found"}</div>
-          <div><strong>Scope 3:</strong> ${analysis.scope_presence?.scope_3?.found ? "Found" : "Not Found"}</div>
+          <div><strong>Scope 1:</strong> ${buildScopeStatus(scope1)}</div>
+          ${scopeSummaryNote(scope1) ? `<div><em>${scopeSummaryNote(scope1)}</em></div>` : ""}
+          <div><strong>Scope 2:</strong> ${buildScopeStatus(scope2)}</div>
+          ${scopeSummaryNote(scope2) ? `<div><em>${scopeSummaryNote(scope2)}</em></div>` : ""}
+          <div><strong>Scope 3:</strong> ${buildScopeStatus(scope3)}</div>
+          ${scopeSummaryNote(scope3) ? `<div><em>${scopeSummaryNote(scope3)}</em></div>` : ""}
           <div><strong>Years:</strong> ${(analysis.reporting_years || []).join(", ") || "None"}</div>
           <div style="margin-top:8px;"><strong>Important points:</strong></div>
           <ul>${points.map(point => `<li>${point}</li>`).join("") || "<li>No points extracted.</li>"}</ul>
           <div style="margin-top:8px;"><strong>Key values:</strong></div>
-          <ul>${metrics.slice(0, 12).map(metric => `<li>${metric.scope || "unknown"} · ${metric.category || "-"}: ${metric.value || "-"} ${metric.unit || ""} (${metric.year || "-"})</li>`).join("") || "<li>No values extracted.</li>"}</ul>
+          <ul>${keyValues.slice(0, 12).map(metric => `<li>${metric.scope || "unknown"} · ${metric.channel || "-"} · ${metric.type || "-"}: ${metric.value || "-"} ${metric.unit || ""} (${metric.year || "-"})</li>`).join("") || "<li>No values extracted.</li>"}</ul>
           <div style="margin-top:8px;"><strong>How totals were calculated:</strong></div>
           <ul>${calculations.map(item => `<li>${item}</li>`).join("") || "<li>No explanation provided.</li>"}</ul>
         `;
         scopeTotalsEl.innerHTML = `
-          <div class="scope-card"><div>Scope 1 Total</div><div class="scope-value">${totals.scope_1 ?? 0}</div><div>tCO2e</div></div>
-          <div class="scope-card"><div>Scope 2 Total</div><div class="scope-value">${totals.scope_2 ?? 0}</div><div>tCO2e</div></div>
-          <div class="scope-card"><div>Scope 3 Total</div><div class="scope-value">${totals.scope_3 ?? 0}</div><div>tCO2e</div></div>
+          <div class="scope-card"><div>Scope 1 Total</div><div class="scope-value">${scopeTotal(scope1)}</div><div>tCO2e</div></div>
+          <div class="scope-card"><div>Scope 2 Total</div><div class="scope-value">${scopeTotal(scope2)}</div><div>tCO2e</div></div>
+          <div class="scope-card"><div>Scope 3 Total</div><div class="scope-value">${scopeTotal(scope3)}</div><div>tCO2e</div></div>
         `;
         latestScopeAnalysis = analysis;
         scopeAnalysisReady = true;
