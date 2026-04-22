@@ -164,6 +164,32 @@
     .status.info { display: block; background: rgba(110,168,254,.15); border: 1px solid rgba(110,168,254,.28); color: #d9e8ff; }
     .status.ok { display: block; background: rgba(126,240,201,.12); border: 1px solid rgba(126,240,201,.28); color: #d7fff0; }
     .status.error { display: block; background: rgba(255,150,150,.12); border: 1px solid rgba(255,150,150,.28); color: #ffd8d8; }
+    .progress-wrap {
+      margin-top: 10px;
+      display: none;
+      align-items: center;
+      gap: 10px;
+    }
+    .progress-wrap.active { display: flex; }
+    .progress-track {
+      flex: 1;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.1);
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    .progress-fill {
+      width: 35%;
+      height: 100%;
+      background: linear-gradient(135deg, #63a7ff, #83efce);
+      animation: progressMove 1.2s infinite linear;
+      transform: translateX(-100%);
+    }
+    @keyframes progressMove {
+      to { transform: translateX(320%); }
+    }
+    .progress-text { color: var(--muted); font-size: 13px; min-width: 110px; text-align: right; }
 
     .stats {
       margin-top: 16px;
@@ -222,6 +248,19 @@
     }
 
     .hidden { display: none; }
+    .scope-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .scope-card {
+      border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 12px;
+      padding: 10px;
+      background: rgba(255,255,255,0.04);
+    }
+    .scope-value { font-size: 22px; font-weight: 800; margin-top: 4px; }
 
     @media (max-width: 900px) {
       .hero { grid-template-columns: 1fr; }
@@ -276,6 +315,10 @@
       </div>
 
       <div id="statusBox" class="status info">Ready to process PDFs.</div>
+      <div id="progressWrap" class="progress-wrap">
+        <div class="progress-track"><div class="progress-fill"></div></div>
+        <div id="progressText" class="progress-text">Processing...</div>
+      </div>
     </section>
 
     <section id="resultCard" class="card result-card hidden">
@@ -303,6 +346,7 @@
 
       <h3 style="margin: 18px 0 8px;">AI Scope 1-3 Analysis</h3>
       <div id="scopeAnalysis" class="summary-box">No AI analysis generated yet.</div>
+      <div id="scopeTotals" class="scope-grid"></div>
     </section>
   </div>
 
@@ -315,6 +359,8 @@
     const downloadSummaryBtn = document.getElementById("downloadSummaryBtn");
     const copyCombinedBtn = document.getElementById("copyCombinedBtn");
     const statusBox = document.getElementById("statusBox");
+    const progressWrap = document.getElementById("progressWrap");
+    const progressText = document.getElementById("progressText");
 
     const resultCard = document.getElementById("resultCard");
     const fileCountEl = document.getElementById("fileCount");
@@ -323,6 +369,7 @@
     const combinedSummaryEl = document.getElementById("combinedSummary");
     const resultsList = document.getElementById("resultsList");
     const scopeAnalysisEl = document.getElementById("scopeAnalysis");
+    const scopeTotalsEl = document.getElementById("scopeTotals");
 
     let latestResults = [];
     let latestCombinedSummary = "";
@@ -331,6 +378,10 @@
     function setStatus(message, type = "info") {
       statusBox.className = `status ${type}`;
       statusBox.textContent = message;
+    }
+    function setBusy(isBusy, label = "Processing...") {
+      progressWrap.classList.toggle("active", isBusy);
+      progressText.textContent = label;
     }
 
     function getSelectedFiles() {
@@ -442,6 +493,7 @@
       analyzeScopeBtn.disabled = true;
       resultCard.classList.add("hidden");
       setStatus(`Processing ${selectedFiles.length} file(s)...`, "info");
+      setBusy(true, "Extracting...");
 
       try {
         const response = await fetch("/extract-texts", {
@@ -461,6 +513,7 @@
       } finally {
         extractBtn.disabled = false;
         analyzeScopeBtn.disabled = false;
+        setBusy(false);
       }
     });
 
@@ -477,6 +530,7 @@
       analyzeScopeBtn.disabled = true;
       extractBtn.disabled = true;
       setStatus("Running GPT scope analysis...", "info");
+      setBusy(true, "Analyzing...");
 
       try {
         const response = await fetch("/analyze-esg-scope", {
@@ -490,6 +544,8 @@
         const analysis = data.analysis || {};
         const points = analysis.important_points || [];
         const metrics = analysis.metrics || [];
+        const totals = analysis.totals_by_scope_tco2e || {};
+        const calculations = analysis.calculation_explanation || [];
         scopeAnalysisEl.innerHTML = `
           <div><strong>Method:</strong> ${analysis.analysis_method || "-"}</div>
           <div><strong>Model:</strong> ${analysis.model || "-"}</div>
@@ -501,6 +557,13 @@
           <ul>${points.map(point => `<li>${point}</li>`).join("") || "<li>No points extracted.</li>"}</ul>
           <div style="margin-top:8px;"><strong>Key values:</strong></div>
           <ul>${metrics.slice(0, 12).map(metric => `<li>${metric.scope || "unknown"} · ${metric.category || "-"}: ${metric.value || "-"} ${metric.unit || ""} (${metric.year || "-"})</li>`).join("") || "<li>No values extracted.</li>"}</ul>
+          <div style="margin-top:8px;"><strong>How totals were calculated:</strong></div>
+          <ul>${calculations.map(item => `<li>${item}</li>`).join("") || "<li>No explanation provided.</li>"}</ul>
+        `;
+        scopeTotalsEl.innerHTML = `
+          <div class="scope-card"><div>Scope 1 Total</div><div class="scope-value">${totals.scope_1 ?? 0}</div><div>tCO2e</div></div>
+          <div class="scope-card"><div>Scope 2 Total</div><div class="scope-value">${totals.scope_2 ?? 0}</div><div>tCO2e</div></div>
+          <div class="scope-card"><div>Scope 3 Total</div><div class="scope-value">${totals.scope_3 ?? 0}</div><div>tCO2e</div></div>
         `;
         resultCard.classList.remove("hidden");
         setStatus("Scope analysis complete.", "ok");
@@ -509,6 +572,7 @@
       } finally {
         analyzeScopeBtn.disabled = false;
         extractBtn.disabled = false;
+        setBusy(false);
       }
     });
 
