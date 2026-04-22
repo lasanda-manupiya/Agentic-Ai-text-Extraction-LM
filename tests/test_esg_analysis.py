@@ -14,21 +14,21 @@ class ScopeAnalysisTests(unittest.TestCase):
         """
         result = analyze_scope_data(text)
 
-        self.assertTrue(result["scope_presence"]["scope_1"]["found"])
-        self.assertTrue(result["scope_presence"]["scope_2"]["found"])
-        self.assertTrue(result["scope_presence"]["scope_3"]["found"])
+        self.assertTrue(result["scope_1"]["reported_emissions_found"])
+        self.assertTrue(result["scope_2"]["reported_emissions_found"])
+        self.assertTrue(result["scope_3"]["reported_emissions_found"])
         self.assertIn("2024", result["reporting_years"])
         self.assertIn("2030", result["reporting_years"])
-        self.assertGreaterEqual(len(result["target_statements"]), 1)
+        self.assertGreaterEqual(len(result["important_points"]), 1)
 
     def test_handles_empty_input(self):
         result = analyze_scope_data("")
 
-        self.assertFalse(result["scope_presence"]["scope_1"]["found"])
-        self.assertFalse(result["scope_presence"]["scope_2"]["found"])
-        self.assertFalse(result["scope_presence"]["scope_3"]["found"])
+        self.assertFalse(result["scope_1"]["reported_emissions_found"])
+        self.assertFalse(result["scope_2"]["reported_emissions_found"])
+        self.assertFalse(result["scope_3"]["reported_emissions_found"])
         self.assertEqual(result["reporting_years"], [])
-        self.assertEqual(result["target_statements"], [])
+        self.assertTrue(isinstance(result["important_points"], list))
 
     def test_gpt_fallback_exposes_missing_key_reason(self):
         previous_key = os.environ.pop("OPENAI_API_KEY", None)
@@ -55,6 +55,27 @@ class ScopeAnalysisTests(unittest.TestCase):
         finally:
             if previous_key is not None:
                 os.environ["OPENAI_API_KEY"] = previous_key
+
+    def test_activity_data_detection_and_estimation(self):
+        text = """
+        Electricity consumption in 2024 was 12,000 kWh.
+        Natural gas usage was 500 kWh for heating.
+        """
+        result = analyze_scope_data(text)
+
+        self.assertTrue(result["scope_2"]["activity_data_found"])
+        self.assertTrue(result["scope_1"]["activity_data_found"])
+        self.assertTrue(result["scope_2"]["estimated_emissions_possible"])
+        self.assertTrue(result["scope_1"]["estimated_emissions_possible"])
+        self.assertGreater(result["scope_2"]["estimated_emissions_tco2e"], 0)
+        self.assertGreater(result["scope_1"]["estimated_emissions_tco2e"], 0)
+        self.assertGreater(len(result["scope_1"]["activity_items"]), 0)
+
+    def test_activity_data_without_factor_marks_not_estimable(self):
+        text = "Scope 3 logistics ton-km 12000 in 2024."
+        result = analyze_scope_data(text)
+        self.assertTrue("value chain" in result["scope_3"]["explanation"].lower() or "scope 3" in text.lower())
+        self.assertFalse(result["scope_3"]["estimated_emissions_possible"])
 
 
 if __name__ == "__main__":

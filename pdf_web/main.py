@@ -127,6 +127,12 @@ class SummaryRequest(BaseModel):
     results: list[dict] = Field(default_factory=list)
 
 
+class ScopeSummaryRequest(BaseModel):
+    title: str = Field(default="Scope 1-3 Emissions Analysis Report")
+    analysis: dict = Field(default_factory=dict)
+    results: list[dict] = Field(default_factory=list)
+
+
 def build_summary_pdf_bytes(
     title: str,
     combined_summary: str,
@@ -204,6 +210,126 @@ def build_summary_pdf_bytes(
         add_line("Model Usage", fontsize=13, spacing=18)
         for k, v in usage.items():
             add_paragraph(f"{k}: {v}", fontsize=10, spacing_after=3)
+
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
+def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dict]) -> bytes:
+    doc = fitz.open()
+    page = doc.new_page()
+    margin = 50
+    y = margin
+    page_height = page.rect.height
+    content_width = page.rect.width - (margin * 2)
+
+    def ensure_space(height_needed: float = 24):
+        nonlocal page, y
+        if y + height_needed > page_height - margin:
+            page = doc.new_page()
+            y = margin
+
+    def add_line(text: str, fontsize: int = 11, spacing: float = 16.0):
+        nonlocal y
+        ensure_space(spacing + 4)
+        page.insert_text((margin, y), text, fontsize=fontsize, fontname="helv")
+        y += spacing
+
+    def add_paragraph(text: str, fontsize: int = 11, spacing_after: float = 10.0):
+        nonlocal page, y
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return
+        rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
+        used = page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+        if used < 0:
+            page = doc.new_page()
+            y = margin
+            rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
+            page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+        approx_lines = max(1, len(cleaned) // 90 + 1)
+        y += approx_lines * (fontsize + 5) + spacing_after
+
+    points = analysis.get("important_points", [])
+    calc_explanations = analysis.get("calculation_explanation", [])
+
+    add_line(title or "Scope 1-3 Emissions Analysis Report", fontsize=16, spacing=24)
+    add_paragraph(
+        f"Analysis method: {analysis.get('analysis_method', '-')} | Model: {analysis.get('model', '-')}",
+        fontsize=10,
+        spacing_after=8,
+    )
+
+    add_line("Scope 1-3 Analysis Summary", fontsize=13, spacing=18)
+    if points:
+        for point in points:
+            add_paragraph(f"• {point}", fontsize=10, spacing_after=4)
+    else:
+        add_paragraph("No additional summary points were extracted.", fontsize=10)
+
+    add_line("Calculation Approach", fontsize=13, spacing=18)
+    if calc_explanations:
+        for explanation in calc_explanations:
+            add_paragraph(f"• {explanation}", fontsize=10, spacing_after=4)
+    else:
+        add_paragraph("No calculation explanation provided by the analysis output.", fontsize=10)
+
+    add_line("Scope-by-Scope Detail", fontsize=13, spacing=18)
+    for scope_key in ["scope_1", "scope_2", "scope_3"]:
+        scope_data = analysis.get(scope_key, {}) if isinstance(analysis.get(scope_key), dict) else {}
+        title_text = scope_key.replace("_", " ").title()
+        add_line(title_text, fontsize=12, spacing=14)
+        add_paragraph(
+            f"Reported emissions found: {'Yes' if scope_data.get('reported_emissions_found') else 'No'}"
+        )
+        add_paragraph(f"Activity data found: {'Yes' if scope_data.get('activity_data_found') else 'No'}", fontsize=10, spacing_after=4)
+        add_paragraph(
+            f"Estimated emissions possible: {'Yes' if scope_data.get('estimated_emissions_possible') else 'No'}",
+            fontsize=10,
+            spacing_after=4,
+        )
+        add_paragraph(
+            f"Estimated emissions (tCO2e): {scope_data.get('estimated_emissions_tco2e')}",
+            fontsize=10,
+            spacing_after=4,
+        )
+        add_paragraph(f"Explanation: {scope_data.get('explanation', '')}", fontsize=10, spacing_after=4)
+        add_paragraph(f"How calculated: {scope_data.get('how_calculated', '')}", fontsize=10, spacing_after=6)
+
+        add_paragraph("Activity items:", fontsize=10, spacing_after=4)
+        activity_items = scope_data.get("activity_items", []) or []
+        if not activity_items:
+            add_paragraph("• None", fontsize=9, spacing_after=4)
+        for item in activity_items[:25]:
+            add_paragraph(
+                f"• {item.get('type', '-')}: {item.get('value', '-')} {item.get('unit', '')} "
+                f"(year: {item.get('year', '-')})",
+                fontsize=9,
+                spacing_after=2,
+            )
+            add_paragraph(f"  source: {item.get('source_excerpt', '')[:160]}", fontsize=8, spacing_after=3)
+
+        add_paragraph("Reported items:", fontsize=10, spacing_after=4)
+        reported_items = scope_data.get("reported_items", []) or []
+        if not reported_items:
+            add_paragraph("• None", fontsize=9, spacing_after=6)
+        for item in reported_items[:25]:
+            add_paragraph(
+                f"• {item.get('type', '-')}: {item.get('value', '-')} {item.get('unit', '')} "
+                f"(year: {item.get('year', '-')})",
+                fontsize=9,
+                spacing_after=2,
+            )
+            add_paragraph(f"  source: {item.get('source_excerpt', '')[:160]}", fontsize=8, spacing_after=4)
+
+    add_line("Documents Analyzed", fontsize=13, spacing=18)
+    for item in results:
+        add_paragraph(
+            f"- {item.get('file_name', 'Unknown')} | pages: {item.get('page_count', '-')} | method: {item.get('method', '-')}",
+            fontsize=9,
+            spacing_after=2,
+        )
 
     pdf_bytes = doc.tobytes()
     doc.close()
@@ -445,6 +571,288 @@ def _extract_usage_dict(response) -> dict:
         if val is not None:
             usage[attr] = val
     return usage
+
+
+def _to_tco2e(value: float, unit: str) -> float:
+    normalized = (unit or "tco2e").lower().replace("₂", "2")
+    if normalized.startswith("kg"):
+        return value / 1000.0
+    return value
+
+
+ELECTRICITY_FACTOR_KG_PER_KWH = 0.233
+GAS_FACTOR_KG_PER_KWH = 0.184
+GAS_KWH_PER_M3 = 10.55
+
+
+def _empty_scope_bucket(default_explanation: str) -> dict:
+    return {
+        "reported_emissions_found": False,
+        "activity_data_found": False,
+        "estimated_emissions_possible": False,
+        "explanation": default_explanation,
+        "how_calculated": "",
+        "activity_items": [],
+        "reported_items": [],
+        "estimated_emissions_tco2e": None,
+    }
+
+
+def analyze_scope_data(text: str) -> dict:
+    cleaned = re.sub(r"\s+", " ", text or "").strip()
+    result = {
+        "scope_1": _empty_scope_bucket("No direct Scope 1 evidence was found."),
+        "scope_2": _empty_scope_bucket("No direct Scope 2 evidence was found."),
+        "scope_3": _empty_scope_bucket("No value chain emissions evidence was found in this document."),
+    }
+
+    years = sorted(set(re.findall(r"\b(20\d{2})\b", cleaned)))
+    target_statements = re.findall(
+        r"([^.]*\b(target|reduction|decrease|net[- ]?zero|goal)\b[^.]*)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    target_texts = [x[0].strip() for x in target_statements][:10]
+
+    # Reported CO2e values only (never invented).
+    reported_pattern = re.compile(
+        r"([^.\n]{0,120}?)(\d[\d,]*(?:\.\d+)?)\s*(tco2e|tco₂e|kgco2e|kgco₂e)\b",
+        flags=re.IGNORECASE,
+    )
+    for match in reported_pattern.finditer(cleaned):
+        context = (match.group(1) or "").strip(" :,-")
+        raw_value = match.group(2).replace(",", "")
+        unit = match.group(3).replace("₂", "2")
+        try:
+            value = float(raw_value)
+        except ValueError:
+            continue
+        scope = "scope_3"
+        context_l = context.lower()
+        if "scope 1" in context_l or "gas" in context_l or "fuel" in context_l:
+            scope = "scope_1"
+        elif "scope 2" in context_l or "electricity" in context_l or "purchased power" in context_l:
+            scope = "scope_2"
+        elif "scope 3" in context_l or any(x in context_l for x in ["value chain", "travel", "waste", "supplier"]):
+            scope = "scope_3"
+        item = {
+            "type": "reported_co2e",
+            "value": value,
+            "unit": unit,
+            "year": years[0] if years else "",
+            "source_excerpt": match.group(0).strip(),
+        }
+        result[scope]["reported_items"].append(item)
+
+    # Scope 2 activity: electricity kWh
+    elec_pattern = re.compile(
+        r"([^.\n]{0,120}?(electricity|energy used|grid|purchased power)[^.\n]{0,40}?)"
+        r"(\d[\d,]*(?:\.\d+)?)\s*(kwh)\b",
+        flags=re.IGNORECASE,
+    )
+    for match in elec_pattern.finditer(cleaned):
+        val = float(match.group(3).replace(",", ""))
+        result["scope_2"]["activity_items"].append(
+            {
+                "type": "electricity_kwh",
+                "value": val,
+                "unit": "kWh",
+                "year": years[0] if years else "",
+                "source_excerpt": match.group(0).strip(),
+            }
+        )
+
+    # Scope 1 activity: gas kWh or m3
+    gas_pattern = re.compile(
+        r"([^.\n]{0,120}?(natural gas|gas usage|gas consumption|gas used)[^.\n]{0,40}?)"
+        r"(\d[\d,]*(?:\.\d+)?)\s*(kwh|m3|m³)\b",
+        flags=re.IGNORECASE,
+    )
+    for match in gas_pattern.finditer(cleaned):
+        val = float(match.group(3).replace(",", ""))
+        unit = match.group(4)
+        result["scope_1"]["activity_items"].append(
+            {
+                "type": "natural_gas_kwh" if unit.lower() == "kwh" else "natural_gas_m3",
+                "value": val,
+                "unit": "kWh" if unit.lower() == "kwh" else "m3",
+                "year": years[0] if years else "",
+                "source_excerpt": match.group(0).strip(),
+            }
+        )
+
+    # Scope 3 value-chain evidence (only explicit evidence).
+    if re.search(r"\bscope\s*3\b|\b(value chain|business travel|commuting|waste|upstream|downstream|supplier)\b", cleaned, flags=re.IGNORECASE):
+        result["scope_3"]["explanation"] = "Value chain evidence was found in the document, relevant to Scope 3."
+        if re.search(r"\bscope\s*3\b", cleaned, flags=re.IGNORECASE):
+            result["scope_3"]["activity_data_found"] = True
+
+    # Populate booleans + optional estimation
+    for scope_key in ["scope_1", "scope_2", "scope_3"]:
+        bucket = result[scope_key]
+        bucket["reported_emissions_found"] = len(bucket["reported_items"]) > 0
+        bucket["activity_data_found"] = len(bucket["activity_items"]) > 0 or bucket["activity_data_found"]
+
+    # Estimation constants
+    if result["scope_1"]["activity_items"]:
+        est_kg = 0.0
+        for item in result["scope_1"]["activity_items"]:
+            if item["type"] == "natural_gas_kwh":
+                est_kg += item["value"] * GAS_FACTOR_KG_PER_KWH
+            elif item["type"] == "natural_gas_m3":
+                est_kg += item["value"] * GAS_KWH_PER_M3 * GAS_FACTOR_KG_PER_KWH
+        result["scope_1"]["estimated_emissions_possible"] = est_kg > 0
+        result["scope_1"]["estimated_emissions_tco2e"] = round(est_kg / 1000.0, 6) if est_kg > 0 else None
+        result["scope_1"]["explanation"] = "Gas consumption is direct fuel use and typically maps to Scope 1."
+        result["scope_1"]["how_calculated"] = (
+            f"Estimated using GAS_FACTOR_KG_PER_KWH={GAS_FACTOR_KG_PER_KWH}; "
+            f"m3 converted using GAS_KWH_PER_M3={GAS_KWH_PER_M3}; kg converted to tCO2e / 1000."
+        )
+
+    if result["scope_2"]["activity_items"]:
+        est_kg = sum(item["value"] * ELECTRICITY_FACTOR_KG_PER_KWH for item in result["scope_2"]["activity_items"])
+        result["scope_2"]["estimated_emissions_possible"] = est_kg > 0
+        result["scope_2"]["estimated_emissions_tco2e"] = round(est_kg / 1000.0, 6) if est_kg > 0 else None
+        result["scope_2"]["explanation"] = "Purchased electricity consumption typically maps to Scope 2."
+        result["scope_2"]["how_calculated"] = (
+            f"Estimated using ELECTRICITY_FACTOR_KG_PER_KWH={ELECTRICITY_FACTOR_KG_PER_KWH}; "
+            "kg converted to tCO2e / 1000."
+        )
+
+    if result["scope_3"]["reported_emissions_found"]:
+        result["scope_3"]["estimated_emissions_possible"] = False
+        result["scope_3"]["how_calculated"] = ""
+
+    important_points = []
+    if result["scope_1"]["activity_data_found"] or result["scope_2"]["activity_data_found"]:
+        important_points.append(
+            "The document contains electricity and/or gas activity data that can support Scope 1 and Scope 2 estimation."
+        )
+    if not result["scope_1"]["reported_emissions_found"] and not result["scope_2"]["reported_emissions_found"] and not result["scope_3"]["reported_emissions_found"]:
+        important_points.append("No direct CO2e values were disclosed in the text.")
+    important_points.extend(target_texts[:2])
+
+    calculation_explanation = [
+        "Reported emissions totals were derived only from explicit CO2e values present in text.",
+        "Activity data was identified for downstream emissions estimation using default factors.",
+    ]
+
+    return {
+        "scope_1": result["scope_1"],
+        "scope_2": result["scope_2"],
+        "scope_3": result["scope_3"],
+        "reporting_years": years,
+        "important_points": important_points,
+        "calculation_explanation": calculation_explanation,
+        "analysis_method": "heuristic_fallback",
+        "model": None,
+        "troubleshooting": {
+            "used_gpt": False,
+            "input_has_text": bool(cleaned),
+            "reason": "Heuristic parser used.",
+        },
+    }
+
+
+def analyze_scope_data_with_gpt(text: str) -> dict:
+    if not (text or "").strip():
+        return {
+            **analyze_scope_data(""),
+            "troubleshooting": {
+                "used_gpt": False,
+                "input_has_text": False,
+                "reason": "No extracted text available for ESG scope analysis.",
+            },
+        }
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    if not api_key:
+        fallback = analyze_scope_data(text)
+        fallback["troubleshooting"] = {
+            "used_gpt": False,
+            "input_has_text": True,
+            "reason": "OPENAI_API_KEY not configured; used heuristic fallback.",
+        }
+        return fallback
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        prompt = """
+You are an ESG emissions analyst.
+Return STRICT JSON using this EXACT shape:
+{
+  "scope_1": {
+    "reported_emissions_found": false,
+    "activity_data_found": true,
+    "estimated_emissions_possible": true,
+    "explanation": "Gas consumption is direct fuel use and typically maps to Scope 1.",
+    "how_calculated": "If emission factors are available, convert gas kWh to kgCO2e or tCO2e using the chosen factor.",
+    "activity_items": [
+      {"type":"natural_gas_kwh","value":127.3,"unit":"kWh","year":"2024","source_excerpt":"Energy Used 127.3 kWh"}
+    ],
+    "reported_items": [],
+    "estimated_emissions_tco2e": null
+  },
+  "scope_2": {
+    "reported_emissions_found": false,
+    "activity_data_found": true,
+    "estimated_emissions_possible": true,
+    "explanation": "Purchased electricity consumption typically maps to Scope 2.",
+    "how_calculated": "If emission factors are available, convert electricity kWh using market based or location based electricity factors.",
+    "activity_items": [
+      {"type":"electricity_kwh","value":59.4,"unit":"kWh","year":"2024","source_excerpt":"Energy Used 59.4 kWh"}
+    ],
+    "reported_items": [],
+    "estimated_emissions_tco2e": null
+  },
+  "scope_3": {
+    "reported_emissions_found": false,
+    "activity_data_found": false,
+    "estimated_emissions_possible": false,
+    "explanation": "No value chain emissions evidence was found in this document.",
+    "how_calculated": "",
+    "activity_items": [],
+    "reported_items": [],
+    "estimated_emissions_tco2e": null
+  },
+  "reporting_years": ["2024"],
+  "important_points": ["..."],
+  "calculation_explanation": ["how totals were calculated, mention assumptions and unit conversion if any"]
+}
+Rules:
+- reported_items must contain ONLY explicit CO2e values from the text.
+- activity_items must contain activity data (electricity kWh, gas kWh/m3, etc.).
+- Scope 3 should only be marked when value-chain evidence exists.
+- Keep explanations concise and business-friendly.
+"""
+        response = client.responses.create(
+            model=model_name,
+            input=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": (text or "")[:120000]},
+            ],
+            text={"format": {"type": "json_object"}},
+        )
+        parsed = json.loads(response.output_text.strip())
+        parsed["analysis_method"] = "gpt"
+        parsed["model"] = model_name
+        parsed["usage"] = _extract_usage_dict(response)
+        parsed["troubleshooting"] = {
+            "used_gpt": True,
+            "input_has_text": True,
+            "reason": "",
+        }
+        return parsed
+    except Exception as exc:
+        fallback = analyze_scope_data(text)
+        fallback["troubleshooting"] = {
+            "used_gpt": False,
+            "input_has_text": True,
+            "reason": f"GPT scope analysis failed: {exc}",
+        }
+        return fallback
 
 
 def analyse_documents_with_gpt(file_payloads: list[dict], combined_text: str, request_id: str) -> dict:
@@ -927,6 +1335,62 @@ async def extract_analyse_and_generate_pdf(request: Request, files: list[UploadF
     )
 
 
+@app.post("/analyze-esg-scope")
+async def analyze_esg_scope(request: Request, files: list[UploadFile] = File(...)):
+    request_id = getattr(request.state, "request_id", "no-id")
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    extraction_results = []
+    combined_text_parts = []
+
+    for file in files:
+        if not file.filename:
+            continue
+        extension = Path(file.filename).suffix.lower()
+        if extension not in SUPPORTED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file: {file.filename}")
+
+        temp_path = None
+        try:
+            contents = await file.read()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
+                temp_file.write(contents)
+                temp_path = temp_file.name
+
+            extracted_text, warnings, page_count, method, structured_data = extract_text_from_file(
+                temp_path, extension, request_id
+            )
+            extraction_results.append(
+                {
+                    "success": True,
+                    "file_name": file.filename,
+                    "page_count": page_count,
+                    "character_count": len(extracted_text),
+                    "method": method,
+                    "warnings": warnings,
+                    "structured_data": structured_data,
+                    "extracted_text": extracted_text,
+                }
+            )
+            if extracted_text:
+                combined_text_parts.append(extracted_text)
+        finally:
+            if temp_path:
+                Path(temp_path).unlink(missing_ok=True)
+
+    combined_text = "\n\n".join(combined_text_parts).strip()
+    analysis = analyze_scope_data_with_gpt(combined_text)
+    analysis["document_count"] = len(extraction_results)
+
+    return {
+        "success": True,
+        "request_id": request_id,
+        "analysis": analysis,
+        "results": extraction_results,
+    }
+
+
 @app.post("/download-summary-pdf")
 def download_summary_pdf(request: Request, payload: SummaryRequest):
     request_id = getattr(request.state, "request_id", "no-id")
@@ -955,6 +1419,32 @@ def download_summary_pdf(request: Request, payload: SummaryRequest):
     except Exception as exc:
         log_error(request_id, "DOWNLOAD_SUMMARY_PDF", exc)
         raise HTTPException(status_code=500, detail=f"Failed to generate summary PDF: {exc}")
+
+
+@app.post("/download-scope-summary-pdf")
+def download_scope_summary_pdf(request: Request, payload: ScopeSummaryRequest):
+    request_id = getattr(request.state, "request_id", "no-id")
+    try:
+        with timed_step(request_id, "BUILD_SCOPE_SUMMARY_PDF"):
+            pdf_bytes = build_scope_analysis_pdf_bytes(
+                title=payload.title,
+                analysis=payload.analysis,
+                results=payload.results,
+            )
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_path.write_bytes(pdf_bytes)
+
+        return FileResponse(
+            path=temp_path,
+            media_type="application/pdf",
+            filename="scope_1_2_3_analysis_report.pdf",
+            background=BackgroundTask(lambda: temp_path.unlink(missing_ok=True)),
+        )
+    except Exception as exc:
+        log_error(request_id, "DOWNLOAD_SCOPE_SUMMARY_PDF", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to generate scope summary PDF: {exc}")
 
 
 if __name__ == "__main__":
