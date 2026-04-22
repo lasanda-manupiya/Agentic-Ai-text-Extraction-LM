@@ -549,10 +549,9 @@
         }
         const analysis = data.analysis || {};
         const points = analysis.important_points || [];
+        const metrics = analysis.metrics || [];
+        const totals = analysis.totals_by_scope_tco2e || {};
         const calculations = analysis.calculation_explanation || [];
-        const s1 = analysis.scope_1 || {};
-        const s2 = analysis.scope_2 || {};
-        const s3 = analysis.scope_3 || {};
         scopeAnalysisEl.innerHTML = `
           <div><strong>Method:</strong> ${analysis.analysis_method || "-"}</div>
           <div><strong>Model:</strong> ${analysis.model || "-"}</div>
@@ -562,19 +561,15 @@
           <div><strong>Years:</strong> ${(analysis.reporting_years || []).join(", ") || "None"}</div>
           <div style="margin-top:8px;"><strong>Important points:</strong></div>
           <ul>${points.map(point => `<li>${point}</li>`).join("") || "<li>No points extracted.</li>"}</ul>
-          <div style="margin-top:8px;"><strong>Scope explanations:</strong></div>
-          <ul>
-            <li><strong>Scope 1:</strong> ${s1.explanation || "-"}</li>
-            <li><strong>Scope 2:</strong> ${s2.explanation || "-"}</li>
-            <li><strong>Scope 3:</strong> ${s3.explanation || "-"}</li>
-          </ul>
+          <div style="margin-top:8px;"><strong>Key values:</strong></div>
+          <ul>${metrics.slice(0, 12).map(metric => `<li>${metric.scope || "unknown"} · ${metric.category || "-"}: ${metric.value || "-"} ${metric.unit || ""} (${metric.year || "-"})</li>`).join("") || "<li>No values extracted.</li>"}</ul>
           <div style="margin-top:8px;"><strong>How totals were calculated:</strong></div>
           <ul>${calculations.map(item => `<li>${item}</li>`).join("") || "<li>No explanation provided.</li>"}</ul>
         `;
         scopeTotalsEl.innerHTML = `
-          <div class="scope-card"><div>Scope 1 Estimated</div><div class="scope-value">${s1.estimated_emissions_tco2e ?? "N/A"}</div><div>tCO2e</div></div>
-          <div class="scope-card"><div>Scope 2 Estimated</div><div class="scope-value">${s2.estimated_emissions_tco2e ?? "N/A"}</div><div>tCO2e</div></div>
-          <div class="scope-card"><div>Scope 3 Estimated</div><div class="scope-value">${s3.estimated_emissions_tco2e ?? "N/A"}</div><div>tCO2e</div></div>
+          <div class="scope-card"><div>Scope 1 Total</div><div class="scope-value">${totals.scope_1 ?? 0}</div><div>tCO2e</div></div>
+          <div class="scope-card"><div>Scope 2 Total</div><div class="scope-value">${totals.scope_2 ?? 0}</div><div>tCO2e</div></div>
+          <div class="scope-card"><div>Scope 3 Total</div><div class="scope-value">${totals.scope_3 ?? 0}</div><div>tCO2e</div></div>
         `;
         latestScopeAnalysis = analysis;
         scopeAnalysisReady = true;
