@@ -447,6 +447,166 @@ def _extract_usage_dict(response) -> dict:
     return usage
 
 
+def _to_tco2e(value: float, unit: str) -> float:
+    normalized = (unit or "tco2e").lower().replace("₂", "2")
+    if normalized.startswith("kg"):
+        return value / 1000.0
+    return value
+
+
+def analyze_scope_data(text: str) -> dict:
+    cleaned = re.sub(r"\s+", " ", text or "").strip()
+    scope_presence = {
+        "scope_1": {"found": bool(re.search(r"\bscope\s*1\b", cleaned, flags=re.IGNORECASE))},
+        "scope_2": {"found": bool(re.search(r"\bscope\s*2\b", cleaned, flags=re.IGNORECASE))},
+        "scope_3": {"found": bool(re.search(r"\bscope\s*3\b", cleaned, flags=re.IGNORECASE))},
+    }
+
+    years = sorted(set(re.findall(r"\b(20\d{2})\b", cleaned)))
+    target_statements = re.findall(
+        r"([^.]*\b(target|reduction|decrease|net[- ]?zero|goal)\b[^.]*)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    target_texts = [x[0].strip() for x in target_statements][:10]
+
+    metrics: list[dict] = []
+    metric_pattern = re.compile(
+        r"(scope\s*[123])([^.\n]{0,140}?)(\d[\d,]*(?:\.\d+)?)\s*(tco2e|tco₂e|co2e|mtco2e|kgco2e)?",
+        flags=re.IGNORECASE,
+    )
+
+    for match in metric_pattern.finditer(cleaned):
+        scope_raw = match.group(1).lower().replace(" ", "_")
+        value_raw = match.group(3).replace(",", "")
+        unit = (match.group(4) or "tCO2e").replace("₂", "2")
+        try:
+            value = float(value_raw)
+        except ValueError:
+            continue
+        tco2e_value = _to_tco2e(value, unit)
+        metrics.append(
+            {
+                "scope": scope_raw,
+                "value": value,
+                "unit": unit,
+                "value_tco2e": round(tco2e_value, 6),
+                "category": match.group(2).strip(" :,-") or "reported emissions",
+                "source_excerpt": match.group(0).strip(),
+            }
+        )
+
+    totals_by_scope = {"scope_1": 0.0, "scope_2": 0.0, "scope_3": 0.0}
+    evidence_by_scope: dict[str, list[str]] = {"scope_1": [], "scope_2": [], "scope_3": []}
+    for metric in metrics:
+        scope = metric["scope"]
+        if scope in totals_by_scope:
+            totals_by_scope[scope] += metric["value_tco2e"]
+            evidence_by_scope[scope].append(metric["source_excerpt"])
+
+    for key in totals_by_scope:
+        totals_by_scope[key] = round(totals_by_scope[key], 4)
+
+    explanations = []
+    for scope_key in ["scope_1", "scope_2", "scope_3"]:
+        evidence = evidence_by_scope.get(scope_key, [])
+        if evidence:
+            explanations.append(
+                f"{scope_key.replace('_', ' ').title()} total is {totals_by_scope[scope_key]} tCO2e, "
+                f"calculated by summing {len(evidence)} extracted emission values."
+            )
+        else:
+            explanations.append(
+                f"{scope_key.replace('_', ' ').title()} was not quantified from extracted text."
+            )
+
+    return {
+        "analysis_method": "heuristic_fallback",
+        "model": None,
+        "scope_presence": scope_presence,
+        "reporting_years": years,
+        "target_statements": target_texts,
+        "important_points": explanations,
+        "metrics": metrics[:50],
+        "totals_by_scope_tco2e": totals_by_scope,
+        "calculation_explanation": explanations,
+        "troubleshooting": {
+            "used_gpt": False,
+            "input_has_text": bool(cleaned),
+            "reason": "Heuristic parser used.",
+        },
+    }
+
+
+def analyze_scope_data_with_gpt(text: str) -> dict:
+    if not (text or "").strip():
+        return {
+            **analyze_scope_data(""),
+            "troubleshooting": {
+                "used_gpt": False,
+                "input_has_text": False,
+                "reason": "No extracted text available for ESG scope analysis.",
+            },
+        }
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    if not api_key:
+        fallback = analyze_scope_data(text)
+        fallback["troubleshooting"] = {
+            "used_gpt": False,
+            "input_has_text": True,
+            "reason": "OPENAI_API_KEY not configured; used heuristic fallback.",
+        }
+        return fallback
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        prompt = """
+You are an ESG emissions analyst.
+Return STRICT JSON with:
+{
+  "scope_presence": {"scope_1":{"found":true},"scope_2":{"found":true},"scope_3":{"found":true}},
+  "reporting_years": ["2024"],
+  "important_points": ["..."],
+  "metrics": [{"scope":"scope_1","category":"fuel combustion","value":123.4,"unit":"tCO2e","year":"2024","explanation":"how extracted"}],
+  "totals_by_scope_tco2e": {"scope_1":123.4,"scope_2":0.0,"scope_3":0.0},
+  "calculation_explanation": ["how totals were calculated, mention assumptions and unit conversion if any"]
+}
+Rules:
+- Use only values present in text.
+- Convert kgCO2e to tCO2e (divide by 1000).
+- Keep explanations concise and business-friendly.
+"""
+        response = client.responses.create(
+            model=model_name,
+            input=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": (text or "")[:120000]},
+            ],
+            text={"format": {"type": "json_object"}},
+        )
+        parsed = json.loads(response.output_text.strip())
+        parsed["analysis_method"] = "gpt"
+        parsed["model"] = model_name
+        parsed["usage"] = _extract_usage_dict(response)
+        parsed["troubleshooting"] = {
+            "used_gpt": True,
+            "input_has_text": True,
+            "reason": "",
+        }
+        return parsed
+    except Exception as exc:
+        fallback = analyze_scope_data(text)
+        fallback["troubleshooting"] = {
+            "used_gpt": False,
+            "input_has_text": True,
+            "reason": f"GPT scope analysis failed: {exc}",
+        }
+        return fallback
+
+
 def analyse_documents_with_gpt(file_payloads: list[dict], combined_text: str, request_id: str) -> dict:
     api_key = os.getenv("OPENAI_API_KEY")
     model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
@@ -925,6 +1085,62 @@ async def extract_analyse_and_generate_pdf(request: Request, files: list[UploadF
         filename="document_analysis_report.pdf",
         background=BackgroundTask(lambda: temp_path.unlink(missing_ok=True)),
     )
+
+
+@app.post("/analyze-esg-scope")
+async def analyze_esg_scope(request: Request, files: list[UploadFile] = File(...)):
+    request_id = getattr(request.state, "request_id", "no-id")
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    extraction_results = []
+    combined_text_parts = []
+
+    for file in files:
+        if not file.filename:
+            continue
+        extension = Path(file.filename).suffix.lower()
+        if extension not in SUPPORTED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file: {file.filename}")
+
+        temp_path = None
+        try:
+            contents = await file.read()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
+                temp_file.write(contents)
+                temp_path = temp_file.name
+
+            extracted_text, warnings, page_count, method, structured_data = extract_text_from_file(
+                temp_path, extension, request_id
+            )
+            extraction_results.append(
+                {
+                    "success": True,
+                    "file_name": file.filename,
+                    "page_count": page_count,
+                    "character_count": len(extracted_text),
+                    "method": method,
+                    "warnings": warnings,
+                    "structured_data": structured_data,
+                    "extracted_text": extracted_text,
+                }
+            )
+            if extracted_text:
+                combined_text_parts.append(extracted_text)
+        finally:
+            if temp_path:
+                Path(temp_path).unlink(missing_ok=True)
+
+    combined_text = "\n\n".join(combined_text_parts).strip()
+    analysis = analyze_scope_data_with_gpt(combined_text)
+    analysis["document_count"] = len(extraction_results)
+
+    return {
+        "success": True,
+        "request_id": request_id,
+        "analysis": analysis,
+        "results": extraction_results,
+    }
 
 
 @app.post("/download-summary-pdf")
