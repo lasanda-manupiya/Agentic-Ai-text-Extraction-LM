@@ -582,17 +582,6 @@
             ...activityItems.map(item => ({ scope: scopeName, channel: "activity", ...item }))
           ];
         };
-        const formatMetricValue = (metric) => {
-          const monthText = metric?.month ? ` ${metric.month}` : "";
-          const yearText = metric?.year ? ` ${metric.year}` : "";
-          const periodText = (monthText || yearText) ? `${monthText}${yearText}`.trim() : "-";
-          if ((metric?.channel === "activity") && String(metric?.unit || "").toLowerCase().trim() === "m3") {
-            const estKwh = Number(metric?.value_kwh_estimate);
-            const converted = Number.isNaN(estKwh) ? "-" : estKwh.toFixed(2);
-            return `${metric.value || "-"} m3 (~${converted} kWh) (${periodText})`;
-          }
-          return `${metric.value || "-"} ${metric.unit || ""} (${periodText})`;
-        };
         const keyValues = [
           ...flattenKeyValues("scope_1", analysis.scope_1),
           ...flattenKeyValues("scope_2", analysis.scope_2),
@@ -607,14 +596,6 @@
           const estimated = scopeData?.estimated_emissions_tco2e;
           if (typeof estimated === "number") return estimated.toFixed(4);
           return "—";
-        };
-        const scopeUsageKwh = (scopeData) => {
-          const kwhTotal = (scopeData?.activity_items || [])
-            .filter(item => String(item?.unit || "").toLowerCase().trim() === "kwh")
-            .map(item => Number(item?.value))
-            .filter(v => !Number.isNaN(v))
-            .reduce((acc, curr) => acc + curr, 0);
-          return kwhTotal > 0 ? kwhTotal.toFixed(2) : "—";
         };
         const scope1 = analysis.scope_1 || {};
         const scope2 = analysis.scope_2 || {};
@@ -632,7 +613,7 @@
           <div style="margin-top:8px;"><strong>Important points:</strong></div>
           <ul>${points.map(point => `<li>${point}</li>`).join("") || "<li>No points extracted.</li>"}</ul>
           <div style="margin-top:8px;"><strong>Key values:</strong></div>
-          <ul>${keyValues.slice(0, 20).map(metric => `<li>${metric.scope || "unknown"} · ${metric.channel || "-"} · ${metric.type || "-"}: ${formatMetricValue(metric)}</li>`).join("") || "<li>No values extracted.</li>"}</ul>
+          <ul>${keyValues.slice(0, 12).map(metric => `<li>${metric.scope || "unknown"} · ${metric.channel || "-"} · ${metric.type || "-"}: ${metric.value || "-"} ${metric.unit || ""} (${metric.year || "-"})</li>`).join("") || "<li>No values extracted.</li>"}</ul>
           <div style="margin-top:8px;"><strong>How totals were calculated:</strong></div>
           <ul>${calculations.map(item => `<li>${item}</li>`).join("") || "<li>No explanation provided.</li>"}</ul>
         `;
@@ -640,9 +621,6 @@
           <div class="scope-card"><div>Scope 1 Total</div><div class="scope-value">${scopeTotal(scope1)}</div><div>tCO2e</div></div>
           <div class="scope-card"><div>Scope 2 Total</div><div class="scope-value">${scopeTotal(scope2)}</div><div>tCO2e</div></div>
           <div class="scope-card"><div>Scope 3 Total</div><div class="scope-value">${scopeTotal(scope3)}</div><div>tCO2e</div></div>
-          <div class="scope-card"><div>Scope 1 Usage</div><div class="scope-value">${scopeUsageKwh(scope1)}</div><div>kWh</div></div>
-          <div class="scope-card"><div>Scope 2 Usage</div><div class="scope-value">${scopeUsageKwh(scope2)}</div><div>kWh</div></div>
-          <div class="scope-card"><div>Scope 3 Usage</div><div class="scope-value">${scopeUsageKwh(scope3)}</div><div>kWh</div></div>
         `;
         latestResults = data.results || [];
         latestScopeAnalysis = analysis;

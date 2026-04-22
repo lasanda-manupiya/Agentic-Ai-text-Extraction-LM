@@ -81,8 +81,8 @@ class ScopeAnalysisTests(unittest.TestCase):
 
     def test_activity_data_detection_for_electricity_and_gas_m3(self):
         text = """
-        January 2024 Electricity: 506.8 kWh
-        January 2024 Gas: 23.9 m3
+        Electricity: 506.8 kWh
+        Gas: 23.9 m3
         """
         result = analyze_scope_data(text)
 
@@ -96,8 +96,6 @@ class ScopeAnalysisTests(unittest.TestCase):
         self.assertTrue(result["scope_2"]["estimated_emissions_possible"])
         self.assertGreater(len(result["scope_1"]["activity_items"]), 0)
         self.assertGreater(len(result["scope_2"]["activity_items"]), 0)
-        self.assertEqual(result["scope_1"]["activity_items"][0].get("month"), "January")
-        self.assertIsNotNone(result["scope_1"]["activity_items"][0].get("value_kwh_estimate"))
 
 
 if __name__ == "__main__":
