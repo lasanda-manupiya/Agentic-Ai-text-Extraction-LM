@@ -622,6 +622,7 @@
           <div class="scope-card"><div>Scope 2 Total</div><div class="scope-value">${scopeTotal(scope2)}</div><div>tCO2e</div></div>
           <div class="scope-card"><div>Scope 3 Total</div><div class="scope-value">${scopeTotal(scope3)}</div><div>tCO2e</div></div>
         `;
+        latestResults = data.results || [];
         latestScopeAnalysis = analysis;
         scopeAnalysisReady = true;
         downloadSummaryBtn.disabled = false;
