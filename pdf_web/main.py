@@ -127,6 +127,12 @@ class SummaryRequest(BaseModel):
     results: list[dict] = Field(default_factory=list)
 
 
+class ScopeSummaryRequest(BaseModel):
+    title: str = Field(default="Scope 1-3 Emissions Analysis Report")
+    analysis: dict = Field(default_factory=dict)
+    results: list[dict] = Field(default_factory=list)
+
+
 def build_summary_pdf_bytes(
     title: str,
     combined_summary: str,
@@ -204,6 +210,134 @@ def build_summary_pdf_bytes(
         add_line("Model Usage", fontsize=13, spacing=18)
         for k, v in usage.items():
             add_paragraph(f"{k}: {v}", fontsize=10, spacing_after=3)
+
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
+def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dict]) -> bytes:
+    doc = fitz.open()
+    page = doc.new_page()
+    margin = 50
+    y = margin
+    page_height = page.rect.height
+    content_width = page.rect.width - (margin * 2)
+
+    def ensure_space(height_needed: float = 24):
+        nonlocal page, y
+        if y + height_needed > page_height - margin:
+            page = doc.new_page()
+            y = margin
+
+    def add_line(text: str, fontsize: int = 11, spacing: float = 16.0):
+        nonlocal y
+        ensure_space(spacing + 4)
+        page.insert_text((margin, y), text, fontsize=fontsize, fontname="helv")
+        y += spacing
+
+    def add_paragraph(text: str, fontsize: int = 11, spacing_after: float = 10.0):
+        nonlocal page, y
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return
+        rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
+        used = page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+        if used < 0:
+            page = doc.new_page()
+            y = margin
+            rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
+            page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+        approx_lines = max(1, len(cleaned) // 90 + 1)
+        y += approx_lines * (fontsize + 5) + spacing_after
+
+    totals = analysis.get("totals_by_scope_tco2e", {})
+    reported_totals = analysis.get("reported_totals_by_scope_tco2e", {})
+    estimated_totals = analysis.get("estimated_totals_by_scope_tco2e", {})
+    scope_presence = analysis.get("scope_presence", {})
+    metrics = analysis.get("metrics", [])
+    activity_data = analysis.get("activity_data", [])
+    points = analysis.get("important_points", [])
+    calc_explanations = analysis.get("calculation_explanation", [])
+
+    add_line(title or "Scope 1-3 Emissions Analysis Report", fontsize=16, spacing=24)
+    add_paragraph(
+        f"Analysis method: {analysis.get('analysis_method', '-')} | Model: {analysis.get('model', '-')}",
+        fontsize=10,
+        spacing_after=8,
+    )
+
+    add_line("Scope Coverage", fontsize=13, spacing=18)
+    for scope_key in ["scope_1", "scope_2", "scope_3"]:
+        found = scope_presence.get(scope_key, {}).get("found", False)
+        total = totals.get(scope_key, 0)
+        reported = reported_totals.get(scope_key, 0)
+        estimated = estimated_totals.get(scope_key, 0)
+        add_paragraph(
+            f"{scope_key.replace('_', ' ').title()}: {'Found' if found else 'Not Found'} | "
+            f"Reported: {reported} tCO2e | Estimated: {estimated} tCO2e | Total: {total} tCO2e"
+        )
+
+    add_line("Scope 1-3 Analysis Summary", fontsize=13, spacing=18)
+    if points:
+        for point in points:
+            add_paragraph(f"• {point}", fontsize=10, spacing_after=4)
+    else:
+        add_paragraph("No additional summary points were extracted.", fontsize=10)
+
+    add_line("Calculation Approach", fontsize=13, spacing=18)
+    if calc_explanations:
+        for explanation in calc_explanations:
+            add_paragraph(f"• {explanation}", fontsize=10, spacing_after=4)
+    else:
+        add_paragraph("No calculation explanation provided by the analysis output.", fontsize=10)
+
+    add_line("Reported Emissions Evidence", fontsize=13, spacing=18)
+    reported_metrics = [m for m in metrics if m.get("metric_type") == "reported_emissions"]
+    if not reported_metrics:
+        add_paragraph("No directly reported emissions values were extracted.", fontsize=10)
+    for metric in reported_metrics[:30]:
+        scope = metric.get("scope", "unknown")
+        add_paragraph(
+            f"• {scope}: {metric.get('category', '-')}: {metric.get('value', '-')} {metric.get('unit', '')}",
+            fontsize=9,
+            spacing_after=2,
+        )
+        if metric.get("source_excerpt"):
+            add_paragraph(f"  source: {metric.get('source_excerpt')[:160]}", fontsize=8, spacing_after=4)
+
+    add_line("Activity Data (for Estimation)", fontsize=13, spacing=18)
+    if not activity_data:
+        add_paragraph("No activity data (kWh, gas, fuel, etc.) was extracted.", fontsize=10)
+    for item in activity_data[:30]:
+        add_paragraph(
+            f"• {item.get('scope', 'unknown')} | {item.get('activity_label', '-')}: "
+            f"{item.get('activity_value', '-')} {item.get('activity_unit', '')}",
+            fontsize=9,
+            spacing_after=2,
+        )
+        add_paragraph(
+            f"  estimation_possible={item.get('estimation_possible', False)} | "
+            f"estimated_tco2e={item.get('estimated_tco2e', '-')}",
+            fontsize=8,
+            spacing_after=2,
+        )
+        add_paragraph(f"  note: {item.get('estimation_note', '-')}", fontsize=8, spacing_after=4)
+
+    add_line("Estimated Emissions by Scope", fontsize=13, spacing=18)
+    for scope_key in ["scope_1", "scope_2", "scope_3"]:
+        add_paragraph(
+            f"{scope_key.replace('_', ' ').title()}: {estimated_totals.get(scope_key, 0)} tCO2e estimated "
+            f"from activity data."
+        )
+
+    add_line("Documents Analyzed", fontsize=13, spacing=18)
+    for item in results:
+        add_paragraph(
+            f"- {item.get('file_name', 'Unknown')} | pages: {item.get('page_count', '-')} | method: {item.get('method', '-')}",
+            fontsize=9,
+            spacing_after=2,
+        )
 
     pdf_bytes = doc.tobytes()
     doc.close()
@@ -445,6 +579,285 @@ def _extract_usage_dict(response) -> dict:
         if val is not None:
             usage[attr] = val
     return usage
+
+
+def _to_tco2e(value: float, unit: str) -> float:
+    normalized = (unit or "tco2e").lower().replace("₂", "2")
+    if normalized.startswith("kg"):
+        return value / 1000.0
+    return value
+
+
+def _infer_scope_from_activity_label(label: str) -> str:
+    lowered = (label or "").lower()
+    if any(word in lowered for word in ["electricity", "grid", "purchased power", "kwh"]):
+        return "scope_2"
+    if any(word in lowered for word in ["commute", "flight", "travel", "waste", "logistics", "freight"]):
+        return "scope_3"
+    return "scope_1"
+
+
+def _emission_factor_for_activity(label: str, unit: str) -> tuple[float | None, str]:
+    lowered = (label or "").lower()
+    unit_norm = (unit or "").lower().replace(" ", "")
+    if "electricity" in lowered and unit_norm in {"kwh"}:
+        return 0.0004, "electricity factor 0.0004 tCO2e/kWh"
+    if ("natural gas" in lowered or "gas usage" in lowered or "gas consumption" in lowered) and unit_norm in {"kwh", "m3", "m³"}:
+        if unit_norm in {"m3", "m³"}:
+            return 0.0019, "natural gas factor 0.0019 tCO2e/m3"
+        return 0.000202, "natural gas factor 0.000202 tCO2e/kWh"
+    if any(x in lowered for x in ["diesel", "generator fuel"]) and unit_norm in {"l", "litre", "litres", "liter", "liters"}:
+        return 0.00268, "diesel factor 0.00268 tCO2e/litre"
+    if any(x in lowered for x in ["petrol", "gasoline"]) and unit_norm in {"l", "litre", "litres", "liter", "liters"}:
+        return 0.00231, "petrol factor 0.00231 tCO2e/litre"
+    if "fuel" in lowered and unit_norm in {"l", "litre", "litres", "liter", "liters"}:
+        return 0.0025, "generic fuel factor 0.0025 tCO2e/litre (assumed)"
+    return None, ""
+
+
+def analyze_scope_data(text: str) -> dict:
+    cleaned = re.sub(r"\s+", " ", text or "").strip()
+    scope_presence = {
+        "scope_1": {"found": bool(re.search(r"\bscope\s*1\b", cleaned, flags=re.IGNORECASE))},
+        "scope_2": {"found": bool(re.search(r"\bscope\s*2\b", cleaned, flags=re.IGNORECASE))},
+        "scope_3": {"found": bool(re.search(r"\bscope\s*3\b", cleaned, flags=re.IGNORECASE))},
+    }
+
+    years = sorted(set(re.findall(r"\b(20\d{2})\b", cleaned)))
+    target_statements = re.findall(
+        r"([^.]*\b(target|reduction|decrease|net[- ]?zero|goal)\b[^.]*)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    target_texts = [x[0].strip() for x in target_statements][:10]
+
+    metrics: list[dict] = []
+    activity_data: list[dict] = []
+    metric_pattern = re.compile(
+        r"(scope\s*[123])([^.\n]{0,140}?)(\d[\d,]*(?:\.\d+)?)\s*(tco2e|tco₂e|co2e|mtco2e|kgco2e)?",
+        flags=re.IGNORECASE,
+    )
+
+    for match in metric_pattern.finditer(cleaned):
+        scope_raw = match.group(1).lower().replace(" ", "_")
+        value_raw = match.group(3).replace(",", "")
+        unit = (match.group(4) or "tCO2e").replace("₂", "2")
+        try:
+            value = float(value_raw)
+        except ValueError:
+            continue
+        tco2e_value = _to_tco2e(value, unit)
+        metrics.append(
+            {
+                "scope": scope_raw,
+                "value": value,
+                "unit": unit,
+                "value_tco2e": round(tco2e_value, 6),
+                "category": match.group(2).strip(" :,-") or "reported emissions",
+                "source_excerpt": match.group(0).strip(),
+                "metric_type": "reported_emissions",
+                "estimation_possible": False,
+            }
+        )
+
+    activity_pattern = re.compile(
+        r"((scope\s*[123])?[^.\n]{0,80}?"
+        r"(electricity|natural gas|gas usage|gas consumption|diesel|petrol|gasoline|fuel usage|fuel consumption|fuel|business travel|flight|waste|freight|logistics)"
+        r"[^.\n]{0,40}?)"
+        r"(\d[\d,]*(?:\.\d+)?)\s*(kwh|mwh|m3|m³|l|litre|litres|liter|liters)\b",
+        flags=re.IGNORECASE,
+    )
+    for match in activity_pattern.finditer(cleaned):
+        descriptor = (match.group(1) or "").strip(" :,-")
+        scope_raw = (match.group(2) or "").lower().replace(" ", "_")
+        if scope_raw not in {"scope_1", "scope_2", "scope_3"}:
+            scope_raw = _infer_scope_from_activity_label(descriptor)
+        value_raw = match.group(4).replace(",", "")
+        unit = (match.group(5) or "").strip()
+        try:
+            value = float(value_raw)
+        except ValueError:
+            continue
+
+        factor, factor_note = _emission_factor_for_activity(descriptor, unit)
+        estimated_tco2e = None
+        estimation_possible = factor is not None
+        if estimation_possible:
+            estimated_tco2e = round(value * factor, 6)
+
+        activity_item = {
+            "scope": scope_raw,
+            "activity_label": descriptor,
+            "activity_value": value,
+            "activity_unit": unit,
+            "emission_factor_used": factor,
+            "estimated_tco2e": estimated_tco2e,
+            "estimation_possible": estimation_possible,
+            "estimation_note": factor_note or "No default factor available for this activity/unit pair.",
+            "source_excerpt": match.group(0).strip(),
+        }
+        activity_data.append(activity_item)
+        metrics.append(
+            {
+                "scope": scope_raw,
+                "value": value,
+                "unit": unit,
+                "value_tco2e": estimated_tco2e if estimated_tco2e is not None else 0,
+                "category": descriptor or "activity data",
+                "source_excerpt": match.group(0).strip(),
+                "metric_type": "estimated_from_activity",
+                "estimation_possible": estimation_possible,
+                "estimation_note": activity_item["estimation_note"],
+            }
+        )
+
+    reported_totals = {"scope_1": 0.0, "scope_2": 0.0, "scope_3": 0.0}
+    estimated_totals = {"scope_1": 0.0, "scope_2": 0.0, "scope_3": 0.0}
+    totals_by_scope = {"scope_1": 0.0, "scope_2": 0.0, "scope_3": 0.0}
+    evidence_by_scope: dict[str, list[str]] = {"scope_1": [], "scope_2": [], "scope_3": []}
+    for metric in metrics:
+        scope = metric["scope"]
+        if scope in reported_totals and metric.get("metric_type") == "reported_emissions":
+            reported_totals[scope] += metric.get("value_tco2e", 0)
+            totals_by_scope[scope] += metric.get("value_tco2e", 0)
+            evidence_by_scope[scope].append(metric["source_excerpt"])
+        elif scope in estimated_totals and metric.get("metric_type") == "estimated_from_activity":
+            if metric.get("estimation_possible"):
+                estimated_totals[scope] += metric.get("value_tco2e", 0)
+                totals_by_scope[scope] += metric.get("value_tco2e", 0)
+            evidence_by_scope[scope].append(metric["source_excerpt"])
+
+    for key in totals_by_scope:
+        reported_totals[key] = round(reported_totals[key], 4)
+        estimated_totals[key] = round(estimated_totals[key], 4)
+        totals_by_scope[key] = round(totals_by_scope[key], 4)
+        has_activity = any(item.get("scope") == key for item in activity_data)
+        can_estimate = any(
+            item.get("scope") == key and item.get("estimation_possible")
+            for item in activity_data
+        )
+        scope_presence[key]["found_activity_data"] = has_activity
+        scope_presence[key]["estimation_possible"] = can_estimate
+        scope_presence[key]["found_reported_emissions"] = bool(reported_totals[key] > 0)
+        scope_presence[key]["found"] = bool(scope_presence[key]["found"] or has_activity or reported_totals[key] > 0)
+
+    explanations = []
+    for scope_key in ["scope_1", "scope_2", "scope_3"]:
+        evidence = evidence_by_scope.get(scope_key, [])
+        if reported_totals[scope_key] > 0 and estimated_totals[scope_key] > 0:
+            explanations.append(
+                f"{scope_key.replace('_', ' ').title()} total is {totals_by_scope[scope_key]} tCO2e "
+                f"({reported_totals[scope_key]} reported + {estimated_totals[scope_key]} estimated from activity data)."
+            )
+        elif reported_totals[scope_key] > 0:
+            explanations.append(
+                f"{scope_key.replace('_', ' ').title()} total is {reported_totals[scope_key]} tCO2e from reported emissions values."
+            )
+        elif estimated_totals[scope_key] > 0:
+            explanations.append(
+                f"{scope_key.replace('_', ' ').title()} has no direct emissions values, estimated {estimated_totals[scope_key]} tCO2e from activity data."
+            )
+        elif evidence:
+            explanations.append(
+                f"{scope_key.replace('_', ' ').title()} activity data was found but no compatible default factor was available."
+            )
+        else:
+            explanations.append(
+                f"{scope_key.replace('_', ' ').title()} was not quantified from extracted text."
+            )
+
+    return {
+        "analysis_method": "heuristic_fallback",
+        "model": None,
+        "scope_presence": scope_presence,
+        "reporting_years": years,
+        "target_statements": target_texts,
+        "important_points": explanations,
+        "metrics": metrics[:80],
+        "activity_data": activity_data[:80],
+        "reported_totals_by_scope_tco2e": reported_totals,
+        "estimated_totals_by_scope_tco2e": estimated_totals,
+        "totals_by_scope_tco2e": totals_by_scope,
+        "calculation_explanation": explanations,
+        "troubleshooting": {
+            "used_gpt": False,
+            "input_has_text": bool(cleaned),
+            "reason": "Heuristic parser used.",
+        },
+    }
+
+
+def analyze_scope_data_with_gpt(text: str) -> dict:
+    if not (text or "").strip():
+        return {
+            **analyze_scope_data(""),
+            "troubleshooting": {
+                "used_gpt": False,
+                "input_has_text": False,
+                "reason": "No extracted text available for ESG scope analysis.",
+            },
+        }
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    if not api_key:
+        fallback = analyze_scope_data(text)
+        fallback["troubleshooting"] = {
+            "used_gpt": False,
+            "input_has_text": True,
+            "reason": "OPENAI_API_KEY not configured; used heuristic fallback.",
+        }
+        return fallback
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        prompt = """
+You are an ESG emissions analyst.
+Return STRICT JSON with:
+{
+  "scope_presence": {"scope_1":{"found":true},"scope_2":{"found":true},"scope_3":{"found":true}},
+  "reporting_years": ["2024"],
+  "important_points": ["..."],
+  "metrics": [{"scope":"scope_1","category":"fuel combustion","value":123.4,"unit":"tCO2e","year":"2024","metric_type":"reported_emissions","explanation":"how extracted"}],
+  "activity_data": [{"scope":"scope_2","activity_label":"electricity consumption","activity_value":10000,"activity_unit":"kWh","estimation_possible":true,"emission_factor_used":0.0004,"estimated_tco2e":4.0,"estimation_note":"..."}],
+  "reported_totals_by_scope_tco2e": {"scope_1":100.0,"scope_2":0.0,"scope_3":0.0},
+  "estimated_totals_by_scope_tco2e": {"scope_1":0.0,"scope_2":4.0,"scope_3":0.0},
+  "totals_by_scope_tco2e": {"scope_1":123.4,"scope_2":0.0,"scope_3":0.0},
+  "calculation_explanation": ["how totals were calculated, mention assumptions and unit conversion if any"]
+}
+Rules:
+- Use only values present in text.
+- Convert kgCO2e to tCO2e (divide by 1000).
+- Detect activity data (kWh, fuel, gas) and estimate where possible using simple factors.
+- Keep explanations concise and business-friendly.
+"""
+        response = client.responses.create(
+            model=model_name,
+            input=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": (text or "")[:120000]},
+            ],
+            text={"format": {"type": "json_object"}},
+        )
+        parsed = json.loads(response.output_text.strip())
+        parsed["analysis_method"] = "gpt"
+        parsed["model"] = model_name
+        parsed["usage"] = _extract_usage_dict(response)
+        parsed["troubleshooting"] = {
+            "used_gpt": True,
+            "input_has_text": True,
+            "reason": "",
+        }
+        return parsed
+    except Exception as exc:
+        fallback = analyze_scope_data(text)
+        fallback["troubleshooting"] = {
+            "used_gpt": False,
+            "input_has_text": True,
+            "reason": f"GPT scope analysis failed: {exc}",
+        }
+        return fallback
 
 
 def analyse_documents_with_gpt(file_payloads: list[dict], combined_text: str, request_id: str) -> dict:
@@ -927,6 +1340,62 @@ async def extract_analyse_and_generate_pdf(request: Request, files: list[UploadF
     )
 
 
+@app.post("/analyze-esg-scope")
+async def analyze_esg_scope(request: Request, files: list[UploadFile] = File(...)):
+    request_id = getattr(request.state, "request_id", "no-id")
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    extraction_results = []
+    combined_text_parts = []
+
+    for file in files:
+        if not file.filename:
+            continue
+        extension = Path(file.filename).suffix.lower()
+        if extension not in SUPPORTED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file: {file.filename}")
+
+        temp_path = None
+        try:
+            contents = await file.read()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
+                temp_file.write(contents)
+                temp_path = temp_file.name
+
+            extracted_text, warnings, page_count, method, structured_data = extract_text_from_file(
+                temp_path, extension, request_id
+            )
+            extraction_results.append(
+                {
+                    "success": True,
+                    "file_name": file.filename,
+                    "page_count": page_count,
+                    "character_count": len(extracted_text),
+                    "method": method,
+                    "warnings": warnings,
+                    "structured_data": structured_data,
+                    "extracted_text": extracted_text,
+                }
+            )
+            if extracted_text:
+                combined_text_parts.append(extracted_text)
+        finally:
+            if temp_path:
+                Path(temp_path).unlink(missing_ok=True)
+
+    combined_text = "\n\n".join(combined_text_parts).strip()
+    analysis = analyze_scope_data_with_gpt(combined_text)
+    analysis["document_count"] = len(extraction_results)
+
+    return {
+        "success": True,
+        "request_id": request_id,
+        "analysis": analysis,
+        "results": extraction_results,
+    }
+
+
 @app.post("/download-summary-pdf")
 def download_summary_pdf(request: Request, payload: SummaryRequest):
     request_id = getattr(request.state, "request_id", "no-id")
@@ -955,6 +1424,32 @@ def download_summary_pdf(request: Request, payload: SummaryRequest):
     except Exception as exc:
         log_error(request_id, "DOWNLOAD_SUMMARY_PDF", exc)
         raise HTTPException(status_code=500, detail=f"Failed to generate summary PDF: {exc}")
+
+
+@app.post("/download-scope-summary-pdf")
+def download_scope_summary_pdf(request: Request, payload: ScopeSummaryRequest):
+    request_id = getattr(request.state, "request_id", "no-id")
+    try:
+        with timed_step(request_id, "BUILD_SCOPE_SUMMARY_PDF"):
+            pdf_bytes = build_scope_analysis_pdf_bytes(
+                title=payload.title,
+                analysis=payload.analysis,
+                results=payload.results,
+            )
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_path.write_bytes(pdf_bytes)
+
+        return FileResponse(
+            path=temp_path,
+            media_type="application/pdf",
+            filename="scope_1_2_3_analysis_report.pdf",
+            background=BackgroundTask(lambda: temp_path.unlink(missing_ok=True)),
+        )
+    except Exception as exc:
+        log_error(request_id, "DOWNLOAD_SCOPE_SUMMARY_PDF", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to generate scope summary PDF: {exc}")
 
 
 if __name__ == "__main__":

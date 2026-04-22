@@ -56,6 +56,27 @@ class ScopeAnalysisTests(unittest.TestCase):
             if previous_key is not None:
                 os.environ["OPENAI_API_KEY"] = previous_key
 
+    def test_activity_data_detection_and_estimation(self):
+        text = """
+        Electricity consumption in 2024 was 12,000 kWh.
+        Diesel fuel usage was 500 liters for backup generators.
+        """
+        result = analyze_scope_data(text)
+
+        self.assertTrue(result["scope_presence"]["scope_2"]["found_activity_data"])
+        self.assertTrue(result["scope_presence"]["scope_1"]["found_activity_data"])
+        self.assertTrue(result["scope_presence"]["scope_2"]["estimation_possible"])
+        self.assertTrue(result["scope_presence"]["scope_1"]["estimation_possible"])
+        self.assertGreater(result["estimated_totals_by_scope_tco2e"]["scope_2"], 0)
+        self.assertGreater(result["estimated_totals_by_scope_tco2e"]["scope_1"], 0)
+        self.assertGreater(len(result["activity_data"]), 0)
+
+    def test_activity_data_without_factor_marks_not_estimable(self):
+        text = "Scope 3 logistics ton-km 12000 in 2024."
+        result = analyze_scope_data(text)
+        self.assertTrue(result["scope_presence"]["scope_3"]["found"])
+        self.assertFalse(result["scope_presence"]["scope_3"]["estimation_possible"])
+
 
 if __name__ == "__main__":
     unittest.main()
