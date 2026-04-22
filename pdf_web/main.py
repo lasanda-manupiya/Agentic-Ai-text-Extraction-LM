@@ -19,6 +19,23 @@ from pydantic import BaseModel, Field
 
 BASE_DIR = Path(__file__).resolve().parent
 
+
+def _load_local_env(env_path: Path) -> None:
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_local_env(BASE_DIR.parent / ".env")
+
 app = FastAPI(title="PDF Text Extractor with OCR")
 
 # Change this path if your Tesseract is installed somewhere else
@@ -352,24 +369,36 @@ Return strict JSON with this schema:
 }
 If data is missing, return empty arrays and found=false.
 """
-    response = client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-        input=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": text[:120000]},
-        ],
-        temperature=0,
-    )
-    raw = response.output_text.strip()
-    data = json.loads(raw)
-    data["analysis_method"] = "gpt"
-    data["model"] = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-    data["troubleshooting"] = {
-        "used_gpt": True,
-        "input_has_text": input_has_text,
-        "reason": "",
-    }
-    return data
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    try:
+        response = client.responses.create(
+            model=model_name,
+            input=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": text[:120000]},
+            ],
+            temperature=0,
+        )
+        raw = response.output_text.strip()
+        data = json.loads(raw)
+        data["analysis_method"] = "gpt"
+        data["model"] = model_name
+        data["troubleshooting"] = {
+            "used_gpt": True,
+            "input_has_text": input_has_text,
+            "reason": "",
+        }
+        return data
+    except Exception as exc:
+        heuristic["analysis_method"] = "heuristic_fallback"
+        heuristic["model"] = model_name
+        heuristic["note"] = "GPT analysis failed. Returned heuristic scope analysis."
+        heuristic["troubleshooting"] = {
+            "used_gpt": False,
+            "input_has_text": input_has_text,
+            "reason": f"GPT analysis failed: {exc}",
+        }
+        return heuristic
 
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
