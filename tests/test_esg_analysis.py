@@ -79,6 +79,24 @@ class ScopeAnalysisTests(unittest.TestCase):
 
         self.assertFalse(result["scope_3"]["estimated_emissions_possible"])
 
+    def test_activity_data_detection_for_electricity_and_gas_m3(self):
+        text = """
+        Electricity: 506.8 kWh
+        Gas: 23.9 m3
+        """
+        result = analyze_scope_data(text)
+
+        self.assertTrue(result["scope_2"]["activity_data_found"])
+        self.assertTrue(result["scope_1"]["activity_data_found"])
+        self.assertFalse(result["scope_3"]["activity_data_found"])
+
+        self.assertFalse(result["scope_1"]["reported_emissions_found"])
+        self.assertFalse(result["scope_2"]["reported_emissions_found"])
+        self.assertTrue(result["scope_1"]["estimated_emissions_possible"])
+        self.assertTrue(result["scope_2"]["estimated_emissions_possible"])
+        self.assertGreater(len(result["scope_1"]["activity_items"]), 0)
+        self.assertGreater(len(result["scope_2"]["activity_items"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
