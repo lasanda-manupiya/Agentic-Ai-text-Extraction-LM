@@ -309,7 +309,7 @@
         <div class="action-row">
           <button id="extractBtn" class="primary">Extract All Files</button>
           <button id="analyzeScopeBtn" class="secondary">Analyze Scope 1-3 (AI)</button>
-          <button id="downloadSummaryBtn" class="secondary" disabled>Download Summary PDF</button>
+          <button id="downloadSummaryBtn" class="secondary" disabled>Download Scope 1-3 PDF</button>
           <button id="copyCombinedBtn" class="secondary" disabled>Copy Combined Text</button>
         </div>
       </div>
@@ -374,6 +374,8 @@
     let latestResults = [];
     let latestCombinedSummary = "";
     let latestCombinedText = "";
+    let latestScopeAnalysis = null;
+    let scopeAnalysisReady = false;
 
     function setStatus(message, type = "info") {
       statusBox.className = `status ${type}`;
@@ -438,7 +440,11 @@
       });
 
       resultCard.classList.remove("hidden");
-      downloadSummaryBtn.disabled = files.length === 0;
+      scopeAnalysisReady = false;
+      latestScopeAnalysis = null;
+      scopeTotalsEl.innerHTML = "";
+      scopeAnalysisEl.textContent = "No AI analysis generated yet.";
+      downloadSummaryBtn.disabled = true;
       copyCombinedBtn.disabled = !latestCombinedText;
     }
 
@@ -565,6 +571,9 @@
           <div class="scope-card"><div>Scope 2 Total</div><div class="scope-value">${totals.scope_2 ?? 0}</div><div>tCO2e</div></div>
           <div class="scope-card"><div>Scope 3 Total</div><div class="scope-value">${totals.scope_3 ?? 0}</div><div>tCO2e</div></div>
         `;
+        latestScopeAnalysis = analysis;
+        scopeAnalysisReady = true;
+        downloadSummaryBtn.disabled = false;
         resultCard.classList.remove("hidden");
         setStatus("Scope analysis complete.", "ok");
       } catch (error) {
@@ -588,15 +597,18 @@
     });
 
     downloadSummaryBtn.addEventListener("click", async () => {
-      if (!latestResults.length) return;
+      if (!latestResults.length || !scopeAnalysisReady || !latestScopeAnalysis) {
+        setStatus("Run Analyze Scope 1-3 first to unlock scope report download.", "error");
+        return;
+      }
 
       try {
-        const response = await fetch("/download-summary-pdf", {
+        const response = await fetch("/download-scope-summary-pdf", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            title: "PDF Batch Summary Report",
-            combined_summary: latestCombinedSummary,
+            title: "Scope 1-3 Emissions Analysis Report",
+            analysis: latestScopeAnalysis,
             results: latestResults
           })
         });
@@ -610,15 +622,15 @@
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = "pdf_summary_report.pdf";
+        link.download = "scope_1_2_3_analysis_report.pdf";
         document.body.appendChild(link);
         link.click();
         link.remove();
         URL.revokeObjectURL(url);
 
-        setStatus("Summary PDF downloaded.", "ok");
+        setStatus("Scope 1-3 analysis PDF downloaded.", "ok");
       } catch (error) {
-        setStatus(error.message || "Could not download PDF summary.", "error");
+        setStatus(error.message || "Could not download scope analysis PDF.", "error");
       }
     });
   </script>

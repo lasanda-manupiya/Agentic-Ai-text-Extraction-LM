@@ -127,6 +127,12 @@ class SummaryRequest(BaseModel):
     results: list[dict] = Field(default_factory=list)
 
 
+class ScopeSummaryRequest(BaseModel):
+    title: str = Field(default="Scope 1-3 Emissions Analysis Report")
+    analysis: dict = Field(default_factory=dict)
+    results: list[dict] = Field(default_factory=list)
+
+
 def build_summary_pdf_bytes(
     title: str,
     combined_summary: str,
@@ -204,6 +210,109 @@ def build_summary_pdf_bytes(
         add_line("Model Usage", fontsize=13, spacing=18)
         for k, v in usage.items():
             add_paragraph(f"{k}: {v}", fontsize=10, spacing_after=3)
+
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
+def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dict]) -> bytes:
+    doc = fitz.open()
+    page = doc.new_page()
+    margin = 50
+    y = margin
+    page_height = page.rect.height
+    content_width = page.rect.width - (margin * 2)
+
+    def ensure_space(height_needed: float = 24):
+        nonlocal page, y
+        if y + height_needed > page_height - margin:
+            page = doc.new_page()
+            y = margin
+
+    def add_line(text: str, fontsize: int = 11, spacing: float = 16.0):
+        nonlocal y
+        ensure_space(spacing + 4)
+        page.insert_text((margin, y), text, fontsize=fontsize, fontname="helv")
+        y += spacing
+
+    def add_paragraph(text: str, fontsize: int = 11, spacing_after: float = 10.0):
+        nonlocal page, y
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return
+        rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
+        used = page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+        if used < 0:
+            page = doc.new_page()
+            y = margin
+            rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
+            page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+        approx_lines = max(1, len(cleaned) // 90 + 1)
+        y += approx_lines * (fontsize + 5) + spacing_after
+
+    totals = analysis.get("totals_by_scope_tco2e", {})
+    scope_presence = analysis.get("scope_presence", {})
+    metrics = analysis.get("metrics", [])
+    points = analysis.get("important_points", [])
+    calc_explanations = analysis.get("calculation_explanation", [])
+
+    add_line(title or "Scope 1-3 Emissions Analysis Report", fontsize=16, spacing=24)
+    add_paragraph(
+        f"Analysis method: {analysis.get('analysis_method', '-')} | Model: {analysis.get('model', '-')}",
+        fontsize=10,
+        spacing_after=8,
+    )
+
+    add_line("Scope Coverage", fontsize=13, spacing=18)
+    for scope_key in ["scope_1", "scope_2", "scope_3"]:
+        found = scope_presence.get(scope_key, {}).get("found", False)
+        total = totals.get(scope_key, 0)
+        add_paragraph(f"{scope_key.replace('_', ' ').title()}: {'Found' if found else 'Not Found'} | Total: {total} tCO2e")
+
+    add_line("Scope 1-3 Analysis Summary", fontsize=13, spacing=18)
+    if points:
+        for point in points:
+            add_paragraph(f"• {point}", fontsize=10, spacing_after=4)
+    else:
+        add_paragraph("No additional summary points were extracted.", fontsize=10)
+
+    add_line("Calculation Approach", fontsize=13, spacing=18)
+    if calc_explanations:
+        for explanation in calc_explanations:
+            add_paragraph(f"• {explanation}", fontsize=10, spacing_after=4)
+    else:
+        add_paragraph("No calculation explanation provided by the analysis output.", fontsize=10)
+
+    add_line("Section-wise Emission Evidence", fontsize=13, spacing=18)
+    grouped: dict[str, list[dict]] = {"scope_1": [], "scope_2": [], "scope_3": []}
+    for metric in metrics:
+        scope = metric.get("scope")
+        if scope in grouped:
+            grouped[scope].append(metric)
+    for scope_key in ["scope_1", "scope_2", "scope_3"]:
+        add_line(scope_key.replace("_", " ").title(), fontsize=11, spacing=14)
+        if not grouped[scope_key]:
+            add_paragraph("No metric rows extracted for this scope.", fontsize=10, spacing_after=6)
+            continue
+        for metric in grouped[scope_key][:20]:
+            category = metric.get("category", "emission item")
+            value = metric.get("value", "-")
+            unit = metric.get("unit", "")
+            year = metric.get("year", "-")
+            add_paragraph(f"• {category}: {value} {unit} (year: {year})", fontsize=9, spacing_after=2)
+            if metric.get("explanation"):
+                add_paragraph(f"  explanation: {metric.get('explanation')}", fontsize=8, spacing_after=2)
+            if metric.get("source_excerpt"):
+                add_paragraph(f"  source: {metric.get('source_excerpt')[:160]}", fontsize=8, spacing_after=4)
+
+    add_line("Documents Analyzed", fontsize=13, spacing=18)
+    for item in results:
+        add_paragraph(
+            f"- {item.get('file_name', 'Unknown')} | pages: {item.get('page_count', '-')} | method: {item.get('method', '-')}",
+            fontsize=9,
+            spacing_after=2,
+        )
 
     pdf_bytes = doc.tobytes()
     doc.close()
@@ -1171,6 +1280,32 @@ def download_summary_pdf(request: Request, payload: SummaryRequest):
     except Exception as exc:
         log_error(request_id, "DOWNLOAD_SUMMARY_PDF", exc)
         raise HTTPException(status_code=500, detail=f"Failed to generate summary PDF: {exc}")
+
+
+@app.post("/download-scope-summary-pdf")
+def download_scope_summary_pdf(request: Request, payload: ScopeSummaryRequest):
+    request_id = getattr(request.state, "request_id", "no-id")
+    try:
+        with timed_step(request_id, "BUILD_SCOPE_SUMMARY_PDF"):
+            pdf_bytes = build_scope_analysis_pdf_bytes(
+                title=payload.title,
+                analysis=payload.analysis,
+                results=payload.results,
+            )
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_path.write_bytes(pdf_bytes)
+
+        return FileResponse(
+            path=temp_path,
+            media_type="application/pdf",
+            filename="scope_1_2_3_analysis_report.pdf",
+            background=BackgroundTask(lambda: temp_path.unlink(missing_ok=True)),
+        )
+    except Exception as exc:
+        log_error(request_id, "DOWNLOAD_SCOPE_SUMMARY_PDF", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to generate scope summary PDF: {exc}")
 
 
 if __name__ == "__main__":
