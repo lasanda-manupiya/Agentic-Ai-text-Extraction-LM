@@ -1,7 +1,7 @@
 import unittest
 import os
 
-from pdf_web.main import analyze_scope_data, analyze_scope_data_with_gpt
+from pdf_web.main import analyze_scope_data, analyze_scope_data_with_gpt, build_scope_analysis_pdf_bytes
 
 
 class ScopeAnalysisTests(unittest.TestCase):
@@ -96,6 +96,55 @@ class ScopeAnalysisTests(unittest.TestCase):
         self.assertTrue(result["scope_2"]["estimated_emissions_possible"])
         self.assertGreater(len(result["scope_1"]["activity_items"]), 0)
         self.assertGreater(len(result["scope_2"]["activity_items"]), 0)
+
+    def test_category_coverage_includes_missing_and_found(self):
+        text = """
+        Scope 1 stationary combustion from boiler diesel use.
+        Purchased electricity is reported with location-based method.
+        Business travel includes flights and hotels.
+        """
+        result = analyze_scope_data(text)
+        coverage = result.get("scope_category_coverage", {})
+
+        self.assertIn("stationary_combustion", coverage.get("scope_1", {}).get("found_categories", []))
+        self.assertIn("mobile_combustion", coverage.get("scope_1", {}).get("missing_categories", []))
+        self.assertIn("purchased_electricity", coverage.get("scope_2", {}).get("found_categories", []))
+        self.assertIn("location_based_method", coverage.get("scope_2", {}).get("found_categories", []))
+        self.assertIn("business_travel", coverage.get("scope_3", {}).get("found_categories", []))
+        self.assertIn("investments", coverage.get("scope_3", {}).get("missing_categories", []))
+
+    def test_scope_3_activity_items_detected(self):
+        text = "Business travel covered 1800 km and hotel accommodation 25 nights in 2024."
+        result = analyze_scope_data(text)
+
+        self.assertTrue(result["scope_3"]["activity_data_found"])
+        self.assertGreater(len(result["scope_3"]["activity_items"]), 0)
+
+    def test_scope_3_reported_category_number_detected(self):
+        text = "Category 6 emissions: 45 tCO2e in 2024."
+        result = analyze_scope_data(text)
+        self.assertTrue(result["scope_3"]["reported_emissions_found"])
+
+    def test_pdf_builder_handles_non_string_category_values(self):
+        analysis = analyze_scope_data("Scope 1 emissions 2024: 10 tCO2e")
+        analysis["scope_category_coverage"]["scope_1"]["found_categories"] = [1, "stationary_combustion"]
+        pdf_bytes = build_scope_analysis_pdf_bytes("x", analysis, [])
+        self.assertIsInstance(pdf_bytes, (bytes, bytearray))
+
+    def test_dynamic_factor_selection_uses_geo_and_year(self):
+        previous_geo = os.environ.get("EMISSIONS_GEO")
+        os.environ["EMISSIONS_GEO"] = "US"
+        try:
+            result = analyze_scope_data("Electricity consumption in 2023 was 1000 kWh.")
+            selected = result.get("selected_emission_factors", {})
+            self.assertEqual(selected.get("geo"), "US")
+            self.assertEqual(selected.get("factor_year"), 2023)
+            self.assertAlmostEqual(selected.get("electricity_kg_per_kwh"), 0.3570, places=4)
+        finally:
+            if previous_geo is None:
+                os.environ.pop("EMISSIONS_GEO", None)
+            else:
+                os.environ["EMISSIONS_GEO"] = previous_geo
 
 
 if __name__ == "__main__":
