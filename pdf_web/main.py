@@ -575,8 +575,15 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
         cleaned = (text or "").strip()
         if not cleaned:
             return
+        ensure_space(fontsize + spacing_after + 8)
         rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
-        used = page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+        try:
+            used = page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+        except ValueError:
+            page = doc.new_page()
+            y = margin
+            rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
+            used = page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
         if used < 0:
             page = doc.new_page()
             y = margin
