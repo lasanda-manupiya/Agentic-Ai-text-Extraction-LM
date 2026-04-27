@@ -113,6 +113,29 @@ class ScopeAnalysisTests(unittest.TestCase):
         self.assertIn("business_travel", coverage.get("scope_3", {}).get("found_categories", []))
         self.assertIn("investments", coverage.get("scope_3", {}).get("missing_categories", []))
 
+    def test_scope_pdf_generation_handles_non_string_lists(self):
+        analysis = {
+            "analysis_method": "heuristic",
+            "model": "local",
+            "reporting_years": [2024, 2025],
+            "important_points": ["point a"],
+            "scope_1": {},
+            "scope_2": {},
+            "scope_3": {},
+            "scope_category_coverage": {
+                "scope_1": {"found_categories": [1, "stationary_combustion"], "missing_categories": [2]},
+                "scope_2": {"found_categories": [], "missing_categories": []},
+                "scope_3": {"found_categories": [], "missing_categories": []},
+            },
+            "calculation_explanation": ["calc"],
+        }
+        results = [{"file_name": "x.pdf", "page_count": 1, "method": "pdfplumber"}]
+
+        pdf_bytes = build_scope_analysis_pdf_bytes("Title", analysis, results)
+
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertGreater(len(pdf_bytes), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
