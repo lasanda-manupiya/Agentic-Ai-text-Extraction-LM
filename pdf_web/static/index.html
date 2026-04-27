@@ -600,6 +600,7 @@
         const scope1 = analysis.scope_1 || {};
         const scope2 = analysis.scope_2 || {};
         const scope3 = analysis.scope_3 || {};
+        const selectedFactors = analysis.selected_emission_factors || {};
         const coverage = analysis.scope_category_coverage || {};
         const renderCoverage = (scopeName, scopeCoverage) => {
           const found = scopeCoverage?.found_categories || [];
