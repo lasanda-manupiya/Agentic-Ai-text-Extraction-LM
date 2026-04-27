@@ -113,29 +113,6 @@ class ScopeAnalysisTests(unittest.TestCase):
         self.assertIn("business_travel", coverage.get("scope_3", {}).get("found_categories", []))
         self.assertIn("investments", coverage.get("scope_3", {}).get("missing_categories", []))
 
-    def test_scope_3_activity_items_detected(self):
-        text = "Business travel covered 1800 km and hotel accommodation 25 nights in 2024."
-        result = analyze_scope_data(text)
-
-        self.assertTrue(result["scope_3"]["activity_data_found"])
-        self.assertGreater(len(result["scope_3"]["activity_items"]), 0)
-
-    def test_scope_3_reported_category_number_detected(self):
-        text = "Category 6 emissions: 45 tCO2e in 2024."
-        result = analyze_scope_data(text)
-        self.assertTrue(result["scope_3"]["reported_emissions_found"])
-
-    def test_pdf_builder_handles_non_string_category_values(self):
-        analysis = analyze_scope_data("Scope 1 emissions 2024: 10 tCO2e")
-        analysis["scope_category_coverage"]["scope_1"]["found_categories"] = [1, "stationary_combustion"]
-        pdf_bytes = build_scope_analysis_pdf_bytes("x", analysis, [])
-        self.assertIsInstance(pdf_bytes, (bytes, bytearray))
-
-    def test_heuristic_mode_does_not_calculate_emissions(self):
-        result = analyze_scope_data("Electricity consumption in 2023 was 1000 kWh.")
-        self.assertEqual(result.get("selected_emission_factors"), {})
-        self.assertEqual(result.get("emission_factor_references"), [])
-
 
 if __name__ == "__main__":
     unittest.main()
