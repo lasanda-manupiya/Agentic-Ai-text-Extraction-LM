@@ -600,6 +600,16 @@
         const scope1 = analysis.scope_1 || {};
         const scope2 = analysis.scope_2 || {};
         const scope3 = analysis.scope_3 || {};
+        const coverage = analysis.scope_category_coverage || {};
+        const factorRefs = analysis.emission_factor_references || [];
+        const renderCoverage = (scopeName, scopeCoverage) => {
+          const found = scopeCoverage?.found_categories || [];
+          const missing = scopeCoverage?.missing_categories || [];
+          return `
+            <div style="margin-top:8px;"><strong>${scopeName} categories found (${found.length}):</strong> ${found.join(", ") || "None"}</div>
+            <div><strong>${scopeName} categories missing (${missing.length}):</strong> ${missing.join(", ") || "None"}</div>
+          `;
+        };
         scopeAnalysisEl.innerHTML = `
           <div><strong>Method:</strong> ${analysis.analysis_method || "-"}</div>
           <div><strong>Model:</strong> ${analysis.model || "-"}</div>
@@ -616,6 +626,12 @@
           <ul>${keyValues.slice(0, 12).map(metric => `<li>${metric.scope || "unknown"} · ${metric.channel || "-"} · ${metric.type || "-"}: ${metric.value || "-"} ${metric.unit || ""} (${metric.year || "-"})</li>`).join("") || "<li>No values extracted.</li>"}</ul>
           <div style="margin-top:8px;"><strong>How totals were calculated:</strong></div>
           <ul>${calculations.map(item => `<li>${item}</li>`).join("") || "<li>No explanation provided.</li>"}</ul>
+          <div style="margin-top:8px;"><strong>Scope category coverage:</strong></div>
+          ${renderCoverage("Scope 1", coverage.scope_1)}
+          ${renderCoverage("Scope 2", coverage.scope_2)}
+          ${renderCoverage("Scope 3", coverage.scope_3)}
+          <div style="margin-top:8px;"><strong>Emission factor references:</strong></div>
+          <ul>${factorRefs.map(ref => `<li>${ref.scope || "-"} · ${ref.factor_name || "-"} (${ref.factor_used || "-"}) - <a href="${ref.url || "#"}" target="_blank" rel="noopener noreferrer">${ref.source || ref.url || "-"}</a></li>`).join("") || "<li>No references available.</li>"}</ul>
         `;
         scopeTotalsEl.innerHTML = `
           <div class="scope-card"><div>Scope 1 Total</div><div class="scope-value">${scopeTotal(scope1)}</div><div>tCO2e</div></div>
