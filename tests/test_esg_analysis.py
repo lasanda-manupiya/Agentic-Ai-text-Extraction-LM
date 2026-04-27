@@ -66,10 +66,10 @@ class ScopeAnalysisTests(unittest.TestCase):
 
         self.assertTrue(result["scope_2"]["activity_data_found"])
         self.assertTrue(result["scope_1"]["activity_data_found"])
-        self.assertTrue(result["scope_2"]["estimated_emissions_possible"])
-        self.assertTrue(result["scope_1"]["estimated_emissions_possible"])
-        self.assertIsNotNone(result["scope_2"]["estimated_emissions_tco2e"])
-        self.assertIsNotNone(result["scope_1"]["estimated_emissions_tco2e"])
+        self.assertFalse(result["scope_2"]["estimated_emissions_possible"])
+        self.assertFalse(result["scope_1"]["estimated_emissions_possible"])
+        self.assertIsNone(result["scope_2"]["estimated_emissions_tco2e"])
+        self.assertIsNone(result["scope_1"]["estimated_emissions_tco2e"])
         self.assertGreater(len(result["scope_2"]["activity_items"]), 0)
         self.assertGreater(len(result["scope_1"]["activity_items"]), 0)
 
@@ -92,8 +92,8 @@ class ScopeAnalysisTests(unittest.TestCase):
 
         self.assertFalse(result["scope_1"]["reported_emissions_found"])
         self.assertFalse(result["scope_2"]["reported_emissions_found"])
-        self.assertTrue(result["scope_1"]["estimated_emissions_possible"])
-        self.assertTrue(result["scope_2"]["estimated_emissions_possible"])
+        self.assertFalse(result["scope_1"]["estimated_emissions_possible"])
+        self.assertFalse(result["scope_2"]["estimated_emissions_possible"])
         self.assertGreater(len(result["scope_1"]["activity_items"]), 0)
         self.assertGreater(len(result["scope_2"]["activity_items"]), 0)
 

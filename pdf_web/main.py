@@ -339,7 +339,7 @@ def _estimate_scope_from_activity(scope_data: dict, scope_key: str, factor_conte
         scope_data["estimated_emissions_possible"] = True
     elif "estimated_emissions_tco2e" not in scope_data:
         scope_data["estimated_emissions_tco2e"] = None
-
+    scope_data["estimated_emissions_possible"] = bool(scope_data.get("estimated_emissions_possible"))
     return scope_data
 
 
@@ -407,7 +407,7 @@ def _normalise_scope_analysis_schema(data: dict) -> dict:
 
     if not isinstance(output.get("scope_category_coverage"), dict):
         output["scope_category_coverage"] = {}
-
+  
     return output
 
 
@@ -1138,7 +1138,7 @@ def analyze_scope_data(text: str) -> dict:
         "scope_1": {
             "reported_emissions_found": bool(reported_scope_1),
             "activity_data_found": bool(gas_kwh_items or gas_m3_items),
-            "estimated_emissions_possible": bool(gas_kwh_items or gas_m3_items),
+            "estimated_emissions_possible": False,
             "explanation": "Gas consumption is direct fuel use and usually maps to Scope 1." if (gas_kwh_items or gas_m3_items) else "No Scope 1 evidence found.",
             "how_calculated": (
                 f"Convert gas activity data (kWh or m3) using {factor_context.get('geo')} factor year {factor_context.get('factor_year')}."
@@ -1152,7 +1152,7 @@ def analyze_scope_data(text: str) -> dict:
         "scope_2": {
             "reported_emissions_found": bool(reported_scope_2),
             "activity_data_found": bool(electricity_items),
-            "estimated_emissions_possible": bool(electricity_items),
+            "estimated_emissions_possible": False,
             "explanation": "Purchased electricity consumption usually maps to Scope 2." if electricity_items else "No Scope 2 evidence found.",
             "how_calculated": (
                 f"Convert electricity kWh using {factor_context.get('geo')} location-based factor year {factor_context.get('factor_year')}."
@@ -1348,6 +1348,8 @@ Rules:
 - Utility bills often contain activity data, not direct emissions totals.
 - If activity data is found, set activity_data_found to true even if reported emissions are absent.
 - Scope 3 should only be marked if there is real value chain evidence.
+- For any activity data, perform emissions calculations in the model response (when possible) and populate estimated_emissions_tco2e.
+- Include factor assumptions in selected_emission_factors and emission_factor_references.
 - Use concise, business-friendly explanations.
 - If there is no evidence for a scope, keep activity_items and reported_items empty.
 - Include category coverage explicitly so reporting can show what is missing.
