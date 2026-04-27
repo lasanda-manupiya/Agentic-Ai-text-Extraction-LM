@@ -31,6 +31,26 @@ SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"
 ELECTRICITY_FACTOR_KG_PER_KWH = 0.233
 GAS_FACTOR_KG_PER_KWH = 0.184
 GAS_KWH_PER_M3 = 11.2
+EMISSION_FACTOR_LIBRARY = {
+    "UK": {
+        "latest_year": 2025,
+        "yearly_factors": {
+            2024: {"electricity_kg_per_kwh": 0.2070, "gas_kg_per_kwh": 0.1829},
+            2025: {"electricity_kg_per_kwh": 0.2070, "gas_kg_per_kwh": 0.1829},
+        },
+        "source": "UK Government GHG Conversion Factors (DESNZ/DEFRA)",
+        "url": "https://www.gov.uk/government/collections/government-conversion-factors-for-company-reporting",
+    },
+    "US": {
+        "latest_year": 2023,
+        "yearly_factors": {
+            2022: {"electricity_kg_per_kwh": 0.3690, "gas_kg_per_kwh": 0.1810},
+            2023: {"electricity_kg_per_kwh": 0.3570, "gas_kg_per_kwh": 0.1810},
+        },
+        "source": "US EPA eGRID + EPA GHG Emission Factors Hub",
+        "url": "https://www.epa.gov/climateleadership/ghg-emission-factors-hub",
+    },
+}
 MONTH_PATTERN = re.compile(
     r"\b("
     r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
@@ -223,6 +243,63 @@ def _safe_float(value) -> float | None:
         return None
 
 
+def _pick_factor_year(requested_year: int | None, available_years: list[int], latest_year: int) -> int:
+    if not available_years:
+        return latest_year
+    if requested_year is None:
+        return latest_year
+    if requested_year in available_years:
+        return requested_year
+    candidates = [year for year in available_years if year <= requested_year]
+    if candidates:
+        return max(candidates)
+    return min(available_years)
+
+
+def _resolve_emission_factor_context(reporting_years: list[str] | None) -> dict:
+    geography = (os.getenv("EMISSIONS_GEO", "UK") or "UK").upper().strip()
+    if geography not in EMISSION_FACTOR_LIBRARY:
+        geography = "UK"
+
+    library = EMISSION_FACTOR_LIBRARY[geography]
+    yearly = library.get("yearly_factors", {})
+    available_years = sorted(yearly.keys())
+    requested_year = _safe_float((reporting_years or [None])[0])
+    requested_year_int = int(requested_year) if requested_year else None
+    selected_year = _pick_factor_year(requested_year_int, available_years, library.get("latest_year", 2025))
+    selected = yearly.get(selected_year, {})
+
+    electricity_factor = selected.get("electricity_kg_per_kwh", ELECTRICITY_FACTOR_KG_PER_KWH)
+    gas_factor = selected.get("gas_kg_per_kwh", GAS_FACTOR_KG_PER_KWH)
+
+    return {
+        "geo": geography,
+        "factor_year": selected_year,
+        "electricity_kg_per_kwh": electricity_factor,
+        "gas_kg_per_kwh": gas_factor,
+        "references": [
+            {
+                "scope": "scope_1",
+                "factor_name": "Natural gas combustion",
+                "factor_used": f"{gas_factor} kgCO2e/kWh",
+                "source": library.get("source"),
+                "url": library.get("url"),
+                "geo": geography,
+                "factor_year": selected_year,
+            },
+            {
+                "scope": "scope_2",
+                "factor_name": "Purchased electricity (location-based proxy)",
+                "factor_used": f"{electricity_factor} kgCO2e/kWh",
+                "source": library.get("source"),
+                "url": library.get("url"),
+                "geo": geography,
+                "factor_year": selected_year,
+            },
+        ],
+    }
+
+
 def _extract_usage_dict(response) -> dict:
     usage_obj = getattr(response, "usage", None)
     if not usage_obj:
@@ -236,10 +313,13 @@ def _extract_usage_dict(response) -> dict:
     return usage
 
 
-def _estimate_scope_from_activity(scope_data: dict, scope_key: str) -> dict:
+def _estimate_scope_from_activity(scope_data: dict, scope_key: str, factor_context: dict | None = None) -> dict:
     if not isinstance(scope_data, dict):
         return scope_data
 
+    factor_context = factor_context or {}
+    electricity_factor = factor_context.get("electricity_kg_per_kwh", ELECTRICITY_FACTOR_KG_PER_KWH)
+    gas_factor = factor_context.get("gas_kg_per_kwh", GAS_FACTOR_KG_PER_KWH)
     total_kg = 0.0
     for item in scope_data.get("activity_items", []):
         value = _safe_float(item.get("value"))
@@ -248,11 +328,11 @@ def _estimate_scope_from_activity(scope_data: dict, scope_key: str) -> dict:
             continue
 
         if scope_key == "scope_1" and unit == "kwh":
-            total_kg += value * GAS_FACTOR_KG_PER_KWH
+            total_kg += value * gas_factor
         elif scope_key == "scope_1" and unit == "m3":
-            total_kg += value * GAS_KWH_PER_M3 * GAS_FACTOR_KG_PER_KWH
+            total_kg += value * GAS_KWH_PER_M3 * gas_factor
         elif scope_key == "scope_2" and unit == "kwh":
-            total_kg += value * ELECTRICITY_FACTOR_KG_PER_KWH
+            total_kg += value * electricity_factor
 
     if total_kg > 0:
         scope_data["estimated_emissions_tco2e"] = round(total_kg / 1000.0, 4)
@@ -293,6 +373,8 @@ def _normalise_scope_analysis_schema(data: dict) -> dict:
         "scope_3": default_scope("No Scope 3 evidence found."),
     }
 
+    factor_context = output.get("selected_emission_factors", {})
+
     for scope_key in ["scope_1", "scope_2", "scope_3"]:
         incoming = data.get(scope_key, {})
         if isinstance(incoming, dict):
@@ -312,7 +394,7 @@ def _normalise_scope_analysis_schema(data: dict) -> dict:
         if output[scope_key]["activity_data_found"]:
             output[scope_key]["estimated_emissions_possible"] = True
 
-        output[scope_key] = _estimate_scope_from_activity(output[scope_key], scope_key)
+        output[scope_key] = _estimate_scope_from_activity(output[scope_key], scope_key, factor_context=factor_context)
 
     if not output["important_points"]:
         output["important_points"] = ["No additional important points were extracted."]
@@ -570,6 +652,15 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
         fontsize=10,
         spacing_after=10,
     )
+    selected_factors = analysis.get("selected_emission_factors", {})
+    if selected_factors:
+        add_paragraph(
+            f"Selected factors: geo={selected_factors.get('geo', '-')} | year={selected_factors.get('factor_year', '-')} | "
+            f"electricity={selected_factors.get('electricity_kg_per_kwh', '-')} kgCO2e/kWh | "
+            f"gas={selected_factors.get('gas_kg_per_kwh', '-')} kgCO2e/kWh",
+            fontsize=9,
+            spacing_after=8,
+        )
 
     years = analysis.get("reporting_years", [])
     if years:
@@ -905,13 +996,42 @@ def _extract_gas_m3_items(cleaned: str) -> list[dict]:
     return items
 
 
+def _extract_scope_3_activity_items(cleaned: str, years: list[str]) -> list[dict]:
+    items = []
+    patterns = [
+        (re.compile(r"(business travel|flight|air travel)[^.\n]{0,120}?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(km|miles?)", re.IGNORECASE), "business_travel_distance"),
+        (re.compile(r"(hotel|overnight stay|accommodation)[^.\n]{0,120}?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(night|nights)", re.IGNORECASE), "business_travel_hotel"),
+        (re.compile(r"(waste|landfill|recycling|incineration)[^.\n]{0,120}?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(kg|tonnes?|tons?)", re.IGNORECASE), "waste_generated_in_operations"),
+        (re.compile(r"(logistics|transportation|distribution|freight)[^.\n]{0,120}?(\d+(?:,\d{3})*(?:\.\d+)?)\s*(tkm|tonne-?km|km|miles?)", re.IGNORECASE), "transportation_and_distribution"),
+    ]
+    for pattern, item_type in patterns:
+        for match in pattern.finditer(cleaned):
+            value = _safe_float(match.group(2))
+            if value is None:
+                continue
+            excerpt = match.group(0).strip()
+            year_match = re.search(r"\b(20\d{2})\b", excerpt)
+            items.append(
+                {
+                    "type": item_type,
+                    "value": value,
+                    "unit": match.group(3),
+                    "year": year_match.group(1) if year_match else (years[0] if years else ""),
+                    "source_excerpt": excerpt,
+                }
+            )
+    return items
+
+
 def analyze_scope_data(text: str) -> dict:
     cleaned = re.sub(r"\s+", " ", text or "").strip()
     years = sorted(set(re.findall(r"\b(20\d{2})\b", cleaned)))
+    factor_context = _resolve_emission_factor_context(years)
 
     electricity_items = _extract_kwh_items(cleaned, "(?:electricity|energy used)", "electricity_kwh")
     gas_kwh_items = []
     gas_m3_items = _extract_gas_m3_items(cleaned)
+    scope_3_activity_items = _extract_scope_3_activity_items(cleaned, years)
 
     gas_context_pattern = re.compile(r"gas[^.\n]{0,160}?(\d+(?:,\d{3})*(?:\.\d+)?)\s*kwh", flags=re.IGNORECASE)
     for match in gas_context_pattern.finditer(cleaned):
@@ -987,11 +1107,26 @@ def analyze_scope_data(text: str) -> dict:
             "source_excerpt": excerpt,
         }
 
+        scope_3_terms = (
+            "scope 3",
+            "category",
+            "travel",
+            "waste",
+            "supplier",
+            "logistics",
+            "purchased goods",
+            "capital goods",
+            "commuting",
+            "leased assets",
+            "franchise",
+            "investment",
+        )
+
         if "scope 1" in label_text or "gas" in label_text or "fuel" in label_text:
             reported_scope_1.append(item)
         elif "scope 2" in label_text or "electricity" in label_text:
             reported_scope_2.append(item)
-        elif "scope 3" in label_text or "travel" in label_text or "waste" in label_text or "supplier" in label_text:
+        elif any(term in label_text for term in scope_3_terms) or re.search(r"\bcategory\s*(1[0-5]|[1-9])\b", label_text):
             reported_scope_3.append(item)
 
     output = {
@@ -1006,7 +1141,7 @@ def analyze_scope_data(text: str) -> dict:
             "estimated_emissions_possible": bool(gas_kwh_items or gas_m3_items),
             "explanation": "Gas consumption is direct fuel use and usually maps to Scope 1." if (gas_kwh_items or gas_m3_items) else "No Scope 1 evidence found.",
             "how_calculated": (
-                "Convert gas activity data (kWh or m3) to emissions using an appropriate gas emission factor."
+                f"Convert gas activity data (kWh or m3) using {factor_context.get('geo')} factor year {factor_context.get('factor_year')}."
                 if (gas_kwh_items or gas_m3_items)
                 else ""
             ),
@@ -1019,18 +1154,26 @@ def analyze_scope_data(text: str) -> dict:
             "activity_data_found": bool(electricity_items),
             "estimated_emissions_possible": bool(electricity_items),
             "explanation": "Purchased electricity consumption usually maps to Scope 2." if electricity_items else "No Scope 2 evidence found.",
-            "how_calculated": "Convert electricity kWh using a market based or location based electricity factor." if electricity_items else "",
+            "how_calculated": (
+                f"Convert electricity kWh using {factor_context.get('geo')} location-based factor year {factor_context.get('factor_year')}."
+                if electricity_items
+                else ""
+            ),
             "activity_items": electricity_items,
             "reported_items": reported_scope_2,
             "estimated_emissions_tco2e": None,
         },
         "scope_3": {
             "reported_emissions_found": bool(reported_scope_3),
-            "activity_data_found": False,
+            "activity_data_found": bool(scope_3_activity_items),
             "estimated_emissions_possible": False,
-            "explanation": "No value chain emissions evidence found in the text.",
+            "explanation": (
+                "Scope 3 value-chain activity evidence was identified. Estimation factors vary by method and category."
+                if scope_3_activity_items
+                else "No value chain emissions evidence found in the text."
+            ),
             "how_calculated": "",
-            "activity_items": [],
+            "activity_items": scope_3_activity_items,
             "reported_items": reported_scope_3,
             "estimated_emissions_tco2e": None,
         },
@@ -1043,6 +1186,13 @@ def analyze_scope_data(text: str) -> dict:
             "input_has_text": bool(cleaned),
             "reason": "Heuristic parser used.",
         },
+        "selected_emission_factors": {
+            "geo": factor_context.get("geo"),
+            "factor_year": factor_context.get("factor_year"),
+            "electricity_kg_per_kwh": factor_context.get("electricity_kg_per_kwh"),
+            "gas_kg_per_kwh": factor_context.get("gas_kg_per_kwh"),
+        },
+        "emission_factor_references": factor_context.get("references", []),
     }
 
     output["scope_category_coverage"] = _detect_category_coverage(cleaned, output)
@@ -1082,6 +1232,8 @@ def analyze_scope_data_with_gpt(text: str) -> dict:
 
     api_key = os.getenv("OPENAI_API_KEY")
     model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    reporting_years = sorted(set(re.findall(r"\b(20\d{2})\b", text or "")))
+    factor_context = _resolve_emission_factor_context(reporting_years)
 
     if not api_key:
         fallback = analyze_scope_data(text)

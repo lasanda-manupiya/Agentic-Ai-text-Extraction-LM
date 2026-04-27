@@ -612,6 +612,7 @@
         scopeAnalysisEl.innerHTML = `
           <div><strong>Method:</strong> ${analysis.analysis_method || "-"}</div>
           <div><strong>Model:</strong> ${analysis.model || "-"}</div>
+          <div><strong>Selected factors:</strong> ${selectedFactors.geo || "-"} ${selectedFactors.factor_year || "-"} | electricity ${selectedFactors.electricity_kg_per_kwh ?? "-"} kgCO2e/kWh | gas ${selectedFactors.gas_kg_per_kwh ?? "-"} kgCO2e/kWh</div>
           <div><strong>Scope 1:</strong> ${buildScopeStatus(scope1)}</div>
           ${scopeSummaryNote(scope1) ? `<div><em>${scopeSummaryNote(scope1)}</em></div>` : ""}
           <div><strong>Scope 2:</strong> ${buildScopeStatus(scope2)}</div>

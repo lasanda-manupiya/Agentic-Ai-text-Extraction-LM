@@ -1,7 +1,7 @@
 import unittest
 import os
 
-from pdf_web.main import analyze_scope_data, analyze_scope_data_with_gpt
+from pdf_web.main import analyze_scope_data, analyze_scope_data_with_gpt, build_scope_analysis_pdf_bytes
 
 
 class ScopeAnalysisTests(unittest.TestCase):
