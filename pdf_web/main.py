@@ -575,8 +575,15 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
         cleaned = (text or "").strip()
         if not cleaned:
             return
+        ensure_space(fontsize + spacing_after + 8)
         rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
-        used = page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+        try:
+            used = page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
+        except ValueError:
+            page = doc.new_page()
+            y = margin
+            rect = fitz.Rect(margin, y, margin + content_width, page.rect.height - margin)
+            used = page.insert_textbox(rect, cleaned, fontsize=fontsize, fontname="helv", align=fitz.TEXT_ALIGN_LEFT)
         if used < 0:
             page = doc.new_page()
             y = margin
@@ -665,7 +672,7 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
     years = analysis.get("reporting_years", [])
     if years:
         add_line("Reporting Years", fontsize=13, spacing=18)
-        add_paragraph(", ".join(years), fontsize=10, spacing_after=8)
+        add_paragraph(", ".join(str(year) for year in years), fontsize=10, spacing_after=8)
 
     points = analysis.get("important_points", [])
     add_line("Important Points", fontsize=13, spacing=18)
@@ -686,8 +693,18 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
             coverage = category_coverage.get(scope_key, {})
             found = coverage.get("found_categories", [])
             missing = coverage.get("missing_categories", [])
-            add_paragraph(f"{scope_key.replace('_', ' ').title()} found categories: {', '.join(found) if found else 'None'}", fontsize=9, spacing_after=2)
-            add_paragraph(f"{scope_key.replace('_', ' ').title()} missing categories: {', '.join(missing) if missing else 'None'}", fontsize=9, spacing_after=5)
+            found_text = ", ".join(str(category) for category in found) if found else "None"
+            missing_text = ", ".join(str(category) for category in missing) if missing else "None"
+            add_paragraph(
+                f"{scope_key.replace('_', ' ').title()} found categories: {found_text}",
+                fontsize=9,
+                spacing_after=2,
+            )
+            add_paragraph(
+                f"{scope_key.replace('_', ' ').title()} missing categories: {missing_text}",
+                fontsize=9,
+                spacing_after=5,
+            )
 
     calc_explanations = analysis.get("calculation_explanation", [])
     add_line("Calculation Approach", fontsize=13, spacing=18)

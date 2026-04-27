@@ -113,6 +113,53 @@ class ScopeAnalysisTests(unittest.TestCase):
         self.assertIn("business_travel", coverage.get("scope_3", {}).get("found_categories", []))
         self.assertIn("investments", coverage.get("scope_3", {}).get("missing_categories", []))
 
+    def test_scope_pdf_generation_handles_non_string_lists(self):
+        analysis = {
+            "analysis_method": "heuristic",
+            "model": "local",
+            "reporting_years": [2024, 2025],
+            "important_points": ["point a"],
+            "scope_1": {},
+            "scope_2": {},
+            "scope_3": {},
+            "scope_category_coverage": {
+                "scope_1": {"found_categories": [1, "stationary_combustion"], "missing_categories": [2]},
+                "scope_2": {"found_categories": [], "missing_categories": []},
+                "scope_3": {"found_categories": [], "missing_categories": []},
+            },
+            "calculation_explanation": ["calc"],
+        }
+        results = [{"file_name": "x.pdf", "page_count": 1, "method": "pdfplumber"}]
+
+        pdf_bytes = build_scope_analysis_pdf_bytes("Title", analysis, results)
+
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertGreater(len(pdf_bytes), 0)
+
+    def test_scope_pdf_generation_handles_long_content_without_textbox_error(self):
+        long_points = [f"Important point {i} " + ("x" * 120) for i in range(120)]
+        analysis = {
+            "analysis_method": "heuristic",
+            "model": "local",
+            "reporting_years": [2024],
+            "important_points": long_points,
+            "scope_1": {},
+            "scope_2": {},
+            "scope_3": {},
+            "scope_category_coverage": {
+                "scope_1": {"found_categories": [f"cat_{i}" for i in range(50)], "missing_categories": []},
+                "scope_2": {"found_categories": [], "missing_categories": [f"miss_{i}" for i in range(50)]},
+                "scope_3": {"found_categories": [], "missing_categories": []},
+            },
+            "calculation_explanation": [f"step {i}" for i in range(80)],
+        }
+        results = [{"file_name": "overflow.pdf", "page_count": 2, "method": "ocr"}]
+
+        pdf_bytes = build_scope_analysis_pdf_bytes("Overflow test", analysis, results)
+
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertGreater(len(pdf_bytes), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
