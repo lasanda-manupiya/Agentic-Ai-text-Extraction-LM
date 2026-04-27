@@ -39,6 +39,78 @@ MONTH_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 
+SCOPE_CATEGORY_DEFINITIONS = {
+    "scope_1": [
+        "stationary_combustion",
+        "mobile_combustion",
+        "process_emissions",
+        "fugitive_emissions",
+    ],
+    "scope_2": [
+        "purchased_electricity",
+        "purchased_steam",
+        "purchased_heating",
+        "purchased_cooling",
+        "location_based_method",
+        "market_based_method",
+    ],
+    "scope_3_upstream": [
+        "purchased_goods_and_services",
+        "capital_goods",
+        "fuel_and_energy_related_activities",
+        "upstream_transportation_and_distribution",
+        "waste_generated_in_operations",
+        "business_travel",
+        "employee_commuting",
+        "upstream_leased_assets",
+    ],
+    "scope_3_downstream": [
+        "downstream_transportation_and_distribution",
+        "processing_of_sold_products",
+        "use_of_sold_products",
+        "end_of_life_treatment_of_sold_products",
+        "downstream_leased_assets",
+        "franchises",
+        "investments",
+    ],
+}
+
+CATEGORY_KEYWORDS = {
+    "scope_1": {
+        "stationary_combustion": ["stationary combustion", "boiler", "furnace", "generator", "lpg", "diesel"],
+        "mobile_combustion": ["mobile combustion", "company-owned vehicle", "fleet", "van", "lorry", "truck"],
+        "process_emissions": ["process emissions", "chemical reaction", "cement", "manufacturing process"],
+        "fugitive_emissions": ["fugitive emissions", "refrigerant leak", "hvac", "methane leak", "gas leak"],
+    },
+    "scope_2": {
+        "purchased_electricity": ["purchased electricity", "grid electricity", "electricity consumption"],
+        "purchased_steam": ["purchased steam", "steam consumption"],
+        "purchased_heating": ["purchased heating", "district heating"],
+        "purchased_cooling": ["purchased cooling", "district cooling"],
+        "location_based_method": ["location-based", "grid average"],
+        "market_based_method": ["market-based", "supplier tariff", "rec", "ppa"],
+    },
+    "scope_3_upstream": {
+        "purchased_goods_and_services": ["purchased goods", "raw materials", "components", "consulting", "it services"],
+        "capital_goods": ["capital goods", "machinery", "buildings", "infrastructure"],
+        "fuel_and_energy_related_activities": ["fuel and energy related", "transmission losses", "fuel extraction"],
+        "upstream_transportation_and_distribution": ["upstream transportation", "supplier deliveries", "inbound logistics"],
+        "waste_generated_in_operations": ["waste generated", "landfill", "incineration", "recycling"],
+        "business_travel": ["business travel", "flights", "hotels", "rail", "taxi"],
+        "employee_commuting": ["employee commuting", "staff travel", "remote working"],
+        "upstream_leased_assets": ["upstream leased assets", "leased offices", "leased equipment"],
+    },
+    "scope_3_downstream": {
+        "downstream_transportation_and_distribution": ["downstream transportation", "delivery to customers", "post-sale warehousing"],
+        "processing_of_sold_products": ["processing of sold products", "intermediate products"],
+        "use_of_sold_products": ["use of sold products", "product use phase", "energy consumed during use"],
+        "end_of_life_treatment_of_sold_products": ["end-of-life treatment", "sold products disposal", "product recycling"],
+        "downstream_leased_assets": ["downstream leased assets", "leased to others"],
+        "franchises": ["franchise", "franchises"],
+        "investments": ["investments", "equity investments", "portfolio emissions"],
+    },
+}
+
 
 def setup_logger() -> logging.Logger:
     logger = logging.getLogger("pdf_extractor")
@@ -215,6 +287,7 @@ def _normalise_scope_analysis_schema(data: dict) -> dict:
         "reporting_years": data.get("reporting_years", []),
         "important_points": data.get("important_points", []),
         "calculation_explanation": data.get("calculation_explanation", []),
+        "scope_category_coverage": data.get("scope_category_coverage", {}),
         "scope_1": default_scope("No Scope 1 evidence found."),
         "scope_2": default_scope("No Scope 2 evidence found."),
         "scope_3": default_scope("No Scope 3 evidence found."),
@@ -250,7 +323,64 @@ def _normalise_scope_analysis_schema(data: dict) -> dict:
             "Activity data was identified for possible downstream emissions estimation.",
         ]
 
+    if not isinstance(output.get("scope_category_coverage"), dict):
+        output["scope_category_coverage"] = {}
+
     return output
+
+
+def _detect_category_coverage(cleaned_text: str, analysis_output: dict) -> dict:
+    lowered = (cleaned_text or "").lower()
+
+    def match_categories(group_name: str) -> list[str]:
+        found = set()
+        for category, keywords in CATEGORY_KEYWORDS.get(group_name, {}).items():
+            if any(keyword in lowered for keyword in keywords):
+                found.add(category)
+        return sorted(found)
+
+    found_scope_1 = set(match_categories("scope_1"))
+    found_scope_2 = set(match_categories("scope_2"))
+    found_scope_3_up = set(match_categories("scope_3_upstream"))
+    found_scope_3_down = set(match_categories("scope_3_downstream"))
+
+    if analysis_output.get("scope_1", {}).get("activity_data_found") or analysis_output.get("scope_1", {}).get("reported_emissions_found"):
+        found_scope_1.update({"stationary_combustion"})
+    if analysis_output.get("scope_2", {}).get("activity_data_found") or analysis_output.get("scope_2", {}).get("reported_emissions_found"):
+        found_scope_2.update({"purchased_electricity"})
+
+    scope_1_expected = SCOPE_CATEGORY_DEFINITIONS["scope_1"]
+    scope_2_expected = SCOPE_CATEGORY_DEFINITIONS["scope_2"]
+    scope_3_up_expected = SCOPE_CATEGORY_DEFINITIONS["scope_3_upstream"]
+    scope_3_down_expected = SCOPE_CATEGORY_DEFINITIONS["scope_3_downstream"]
+
+    return {
+        "scope_1": {
+            "expected_categories": scope_1_expected,
+            "found_categories": sorted(found_scope_1),
+            "missing_categories": [c for c in scope_1_expected if c not in found_scope_1],
+        },
+        "scope_2": {
+            "expected_categories": scope_2_expected,
+            "found_categories": sorted(found_scope_2),
+            "missing_categories": [c for c in scope_2_expected if c not in found_scope_2],
+        },
+        "scope_3": {
+            "expected_categories": scope_3_up_expected + scope_3_down_expected,
+            "found_categories": sorted(found_scope_3_up | found_scope_3_down),
+            "missing_categories": [c for c in (scope_3_up_expected + scope_3_down_expected) if c not in (found_scope_3_up | found_scope_3_down)],
+            "upstream": {
+                "expected_categories": scope_3_up_expected,
+                "found_categories": sorted(found_scope_3_up),
+                "missing_categories": [c for c in scope_3_up_expected if c not in found_scope_3_up],
+            },
+            "downstream": {
+                "expected_categories": scope_3_down_expected,
+                "found_categories": sorted(found_scope_3_down),
+                "missing_categories": [c for c in scope_3_down_expected if c not in found_scope_3_down],
+            },
+        },
+    }
 
 
 def build_summary_pdf_bytes(
@@ -457,6 +587,16 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
     render_scope("scope_1", analysis.get("scope_1", {}))
     render_scope("scope_2", analysis.get("scope_2", {}))
     render_scope("scope_3", analysis.get("scope_3", {}))
+
+    category_coverage = analysis.get("scope_category_coverage", {})
+    if category_coverage:
+        add_line("Scope Category Coverage", fontsize=13, spacing=18)
+        for scope_key in ["scope_1", "scope_2", "scope_3"]:
+            coverage = category_coverage.get(scope_key, {})
+            found = coverage.get("found_categories", [])
+            missing = coverage.get("missing_categories", [])
+            add_paragraph(f"{scope_key.replace('_', ' ').title()} found categories: {', '.join(found) if found else 'None'}", fontsize=9, spacing_after=2)
+            add_paragraph(f"{scope_key.replace('_', ' ').title()} missing categories: {', '.join(missing) if missing else 'None'}", fontsize=9, spacing_after=5)
 
     calc_explanations = analysis.get("calculation_explanation", [])
     add_line("Calculation Approach", fontsize=13, spacing=18)
@@ -905,6 +1045,7 @@ def analyze_scope_data(text: str) -> dict:
         },
     }
 
+    output["scope_category_coverage"] = _detect_category_coverage(cleaned, output)
     output = _normalise_scope_analysis_schema(output)
 
     important_points = []
@@ -914,6 +1055,14 @@ def analyze_scope_data(text: str) -> dict:
         important_points.append("Electricity activity data was identified and mapped to Scope 2.")
     if output["scope_3"]["reported_emissions_found"] or output["scope_3"]["activity_data_found"]:
         important_points.append("Possible Scope 3 evidence was identified in the document.")
+    coverage = output.get("scope_category_coverage", {})
+    if coverage:
+        missing_scope_1 = len(coverage.get("scope_1", {}).get("missing_categories", []))
+        missing_scope_2 = len(coverage.get("scope_2", {}).get("missing_categories", []))
+        missing_scope_3 = len(coverage.get("scope_3", {}).get("missing_categories", []))
+        important_points.append(
+            f"Category coverage gaps identified - Scope 1 missing: {missing_scope_1}, Scope 2 missing: {missing_scope_2}, Scope 3 missing: {missing_scope_3}."
+        )
     if not important_points:
         important_points.append("No direct emissions values were found. Activity data may still be limited.")
 
@@ -1009,6 +1158,33 @@ Return JSON with exactly this structure:
     "estimated_emissions_tco2e": null
   },
   "calculation_explanation": []
+  "scope_category_coverage": {
+    "scope_1": {
+      "expected_categories": [],
+      "found_categories": [],
+      "missing_categories": []
+    },
+    "scope_2": {
+      "expected_categories": [],
+      "found_categories": [],
+      "missing_categories": []
+    },
+    "scope_3": {
+      "expected_categories": [],
+      "found_categories": [],
+      "missing_categories": [],
+      "upstream": {
+        "expected_categories": [],
+        "found_categories": [],
+        "missing_categories": []
+      },
+      "downstream": {
+        "expected_categories": [],
+        "found_categories": [],
+        "missing_categories": []
+      }
+    }
+  }
 }
 
 Rules:
@@ -1022,6 +1198,7 @@ Rules:
 - Scope 3 should only be marked if there is real value chain evidence.
 - Use concise, business-friendly explanations.
 - If there is no evidence for a scope, keep activity_items and reported_items empty.
+- Include category coverage explicitly so reporting can show what is missing.
 """
 
         response = client.responses.create(
@@ -1043,6 +1220,8 @@ Rules:
             "reason": "",
         }
 
+        parsed = _normalise_scope_analysis_schema(parsed)
+        parsed["scope_category_coverage"] = _detect_category_coverage(text, parsed)
         parsed = _normalise_scope_analysis_schema(parsed)
 
         if not parsed["important_points"]:
