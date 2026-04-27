@@ -97,6 +97,22 @@ class ScopeAnalysisTests(unittest.TestCase):
         self.assertGreater(len(result["scope_1"]["activity_items"]), 0)
         self.assertGreater(len(result["scope_2"]["activity_items"]), 0)
 
+    def test_category_coverage_includes_missing_and_found(self):
+        text = """
+        Scope 1 stationary combustion from boiler diesel use.
+        Purchased electricity is reported with location-based method.
+        Business travel includes flights and hotels.
+        """
+        result = analyze_scope_data(text)
+        coverage = result.get("scope_category_coverage", {})
+
+        self.assertIn("stationary_combustion", coverage.get("scope_1", {}).get("found_categories", []))
+        self.assertIn("mobile_combustion", coverage.get("scope_1", {}).get("missing_categories", []))
+        self.assertIn("purchased_electricity", coverage.get("scope_2", {}).get("found_categories", []))
+        self.assertIn("location_based_method", coverage.get("scope_2", {}).get("found_categories", []))
+        self.assertIn("business_travel", coverage.get("scope_3", {}).get("found_categories", []))
+        self.assertIn("investments", coverage.get("scope_3", {}).get("missing_categories", []))
+
 
 if __name__ == "__main__":
     unittest.main()
