@@ -601,8 +601,6 @@
         const scope2 = analysis.scope_2 || {};
         const scope3 = analysis.scope_3 || {};
         const coverage = analysis.scope_category_coverage || {};
-        const factorRefs = analysis.emission_factor_references || [];
-        const selectedFactors = analysis.selected_emission_factors || {};
         const renderCoverage = (scopeName, scopeCoverage) => {
           const found = scopeCoverage?.found_categories || [];
           const missing = scopeCoverage?.missing_categories || [];
@@ -632,8 +630,6 @@
           ${renderCoverage("Scope 1", coverage.scope_1)}
           ${renderCoverage("Scope 2", coverage.scope_2)}
           ${renderCoverage("Scope 3", coverage.scope_3)}
-          <div style="margin-top:8px;"><strong>Emission factor references:</strong></div>
-          <ul>${factorRefs.map(ref => `<li>${ref.scope || "-"} · ${ref.factor_name || "-"} (${ref.factor_used || "-"}) - <a href="${ref.url || "#"}" target="_blank" rel="noopener noreferrer">${ref.source || ref.url || "-"}</a></li>`).join("") || "<li>No references available.</li>"}</ul>
         `;
         scopeTotalsEl.innerHTML = `
           <div class="scope-card"><div>Scope 1 Total</div><div class="scope-value">${scopeTotal(scope1)}</div><div>tCO2e</div></div>

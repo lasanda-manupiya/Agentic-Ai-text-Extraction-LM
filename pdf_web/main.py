@@ -367,8 +367,6 @@ def _normalise_scope_analysis_schema(data: dict) -> dict:
         "reporting_years": data.get("reporting_years", []),
         "important_points": data.get("important_points", []),
         "calculation_explanation": data.get("calculation_explanation", []),
-        "emission_factor_references": data.get("emission_factor_references", []),
-        "selected_emission_factors": data.get("selected_emission_factors", {}),
         "scope_category_coverage": data.get("scope_category_coverage", {}),
         "scope_1": default_scope("No Scope 1 evidence found."),
         "scope_2": default_scope("No Scope 2 evidence found."),
@@ -409,10 +407,6 @@ def _normalise_scope_analysis_schema(data: dict) -> dict:
 
     if not isinstance(output.get("scope_category_coverage"), dict):
         output["scope_category_coverage"] = {}
-    if not isinstance(output.get("emission_factor_references"), list):
-        output["emission_factor_references"] = []
-    if not isinstance(output.get("selected_emission_factors"), dict):
-        output["selected_emission_factors"] = {}
 
     return output
 
@@ -692,26 +686,8 @@ def build_scope_analysis_pdf_bytes(title: str, analysis: dict, results: list[dic
             coverage = category_coverage.get(scope_key, {})
             found = coverage.get("found_categories", [])
             missing = coverage.get("missing_categories", [])
-            add_paragraph(
-                f"{scope_key.replace('_', ' ').title()} found categories: {', '.join(map(str, found)) if found else 'None'}",
-                fontsize=9,
-                spacing_after=2,
-            )
-            add_paragraph(
-                f"{scope_key.replace('_', ' ').title()} missing categories: {', '.join(map(str, missing)) if missing else 'None'}",
-                fontsize=9,
-                spacing_after=5,
-            )
-
-    factor_refs = analysis.get("emission_factor_references", [])
-    if factor_refs:
-        add_line("Emission Factor References", fontsize=13, spacing=18)
-        for ref in factor_refs:
-            add_paragraph(
-                f"• {ref.get('scope', '-')} | {ref.get('factor_name', '-')} | {ref.get('factor_used', '-')} | {ref.get('source', '-')}: {ref.get('url', '-')}",
-                fontsize=8,
-                spacing_after=3,
-            )
+            add_paragraph(f"{scope_key.replace('_', ' ').title()} found categories: {', '.join(found) if found else 'None'}", fontsize=9, spacing_after=2)
+            add_paragraph(f"{scope_key.replace('_', ' ').title()} missing categories: {', '.join(missing) if missing else 'None'}", fontsize=9, spacing_after=5)
 
     calc_explanations = analysis.get("calculation_explanation", [])
     add_line("Calculation Approach", fontsize=13, spacing=18)
@@ -1398,14 +1374,6 @@ Rules:
 
         parsed = _normalise_scope_analysis_schema(parsed)
         parsed["scope_category_coverage"] = _detect_category_coverage(text, parsed)
-        parsed["selected_emission_factors"] = {
-            "geo": factor_context.get("geo"),
-            "factor_year": factor_context.get("factor_year"),
-            "electricity_kg_per_kwh": factor_context.get("electricity_kg_per_kwh"),
-            "gas_kg_per_kwh": factor_context.get("gas_kg_per_kwh"),
-        }
-        if not parsed.get("emission_factor_references"):
-            parsed["emission_factor_references"] = factor_context.get("references", [])
         parsed = _normalise_scope_analysis_schema(parsed)
 
         if not parsed["important_points"]:
